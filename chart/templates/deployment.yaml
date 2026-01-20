@@ -1,0 +1,164 @@
+{{- $hasInline := false -}}
+{{- $inlineBackends := list -}}
+{{- range $backendName, $backendConfig := .Values.config.backends -}}
+{{- if $backendConfig.credentials -}}
+{{- if eq (default "" $backendConfig.credentials.type) "inline" -}}
+{{- $hasInline = true -}}
+{{- $inlineBackends = append $inlineBackends $backendName -}}
+{{- end -}}
+{{- end -}}
+{{- end }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "s3-router.fullname" . }}
+  labels:
+    {{- include "s3-router.labels" . | nindent 4 }}
+spec:
+  {{- if not .Values.autoscaling.enabled }}
+  replicas: {{ .Values.replicaCount }}
+  {{- end }}
+  selector:
+    matchLabels:
+      {{- include "s3-router.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      annotations:
+        checksum/config: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
+        checksum/secret: {{ include (print $.Template.BasePath "/secret.yaml") . | sha256sum }}
+        {{- with .Values.podAnnotations }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      labels:
+        {{- include "s3-router.selectorLabels" . | nindent 8 }}
+    spec:
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      serviceAccountName: {{ include "s3-router.serviceAccountName" . }}
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      containers:
+        - name: {{ .Chart.Name }}
+          securityContext:
+            {{- toYaml .Values.securityContext | nindent 12 }}
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          ports:
+            - name: http
+              containerPort: {{ .Values.server.listenPort | int }}
+              protocol: TCP
+            - name: admin
+              containerPort: {{ .Values.server.adminPort | int }}
+              protocol: TCP
+          args:
+            - "-config"
+            - "/etc/s3router/config/config.yaml"
+            - "-listen"
+            - {{ (print ":" .Values.server.listenPort) | quote }}
+            - "-admin"
+            - {{ (print ":" .Values.server.adminPort) | quote }}
+          env:
+            {{- if .Values.opentelemetry.enabled }}
+            # OpenTelemetry Configuration
+            - name: OTEL_EXPORTER_OTLP_ENDPOINT
+              value: {{ .Values.opentelemetry.exporter.endpoint | quote }}
+            - name: OTEL_EXPORTER_OTLP_TIMEOUT
+              value: {{ .Values.opentelemetry.exporter.timeout | quote }}
+            - name: OTEL_TRACES_EXPORTER
+              value: {{ .Values.opentelemetry.traces.exporter | quote }}
+            - name: OTEL_TRACES_SAMPLER
+              value: {{ .Values.opentelemetry.traces.sampler | quote }}
+            - name: OTEL_TRACES_SAMPLER_ARG
+              value: {{ .Values.opentelemetry.traces.samplerArg | quote }}
+            - name: OTEL_METRICS_EXPORTER
+              value: {{ .Values.opentelemetry.metrics.exporter | quote }}
+            - name: OTEL_SERVICE_NAME
+              value: {{ .Values.opentelemetry.service.name | quote }}
+            - name: OTEL_SERVICE_VERSION
+              value: {{ .Values.opentelemetry.service.version | quote }}
+            - name: OTEL_SDK_DISABLED
+              value: {{ .Values.opentelemetry.sdk.disabled | quote }}
+            {{- end }}
+            - name: AWS_ACCESS_KEY_ID
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "s3-router.fullname" . }}-credentials
+                  key: access-key-id
+                  optional: true
+            - name: AWS_SECRET_ACCESS_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "s3-router.fullname" . }}-credentials
+                  key: secret-access-key
+                  optional: true
+          {{- if .Values.livenessProbe }}
+          livenessProbe:
+            {{- toYaml (merge .Values.livenessProbe (dict "httpGet" (dict "port" .Values.server.adminPort))) | nindent 12 }}
+          {{- end }}
+          {{- if .Values.readinessProbe }}
+          readinessProbe:
+            {{- toYaml (merge .Values.readinessProbe (dict "httpGet" (dict "port" .Values.server.adminPort))) | nindent 12 }}
+          {{- end }}
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+          volumeMounts:
+            - name: config
+              mountPath: /etc/s3router/config
+              readOnly: true
+            - name: credentials
+              mountPath: /etc/s3router/credentials
+              readOnly: true
+            {{- if $hasInline }}
+            - name: backend-credentials
+              mountPath: /etc/s3router/backend-credentials
+              readOnly: true
+            {{- end }}
+            - name: tmp
+              mountPath: /tmp
+            - name: cache
+              mountPath: /var/cache/s3router
+          {{- with .Values.lifecycle }}
+          lifecycle:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+      volumes:
+        - name: config
+          configMap:
+            name: {{ include "s3-router.fullname" . }}-config
+            items:
+            - key: config.yaml
+              path: config.yaml
+        - name: credentials
+          secret:
+            secretName: {{ include "s3-router.fullname" . }}-credentials
+            items:
+            - key: credentials.json
+              path: credentials.json
+        {{- if $hasInline }}
+        - name: backend-credentials
+          secret:
+            secretName: {{ include "s3-router.fullname" . }}-credentials
+            items:
+            {{- range $backendName := $inlineBackends }}
+            - key: backend-{{ $backendName }}.json
+              path: backend-{{ $backendName }}.json
+            {{- end }}
+        {{- end }}
+        - name: tmp
+          emptyDir: {}
+        - name: cache
+          emptyDir: {}
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}

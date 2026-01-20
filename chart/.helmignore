@@ -1,0 +1,28 @@
+# Patterns to ignore when building packages.
+# This supports shell glob patterns, relative path patterns, and negated patterns (prefixed with !).
+# Only one pattern per line.
+.DS_Store
+# Common VCS dirs
+.git/
+.gitignore
+.bzr/
+.bzrignore
+.hg/
+.hgignore
+.svn/
+# Common backup files
+*.swp
+*.swo
+*~
+.project
+.pydevproject
+.settings
+*.jinja2
+*.swp
+*.awsf
+# Testing
+.pytest_cache/
+.coverage
+*.egg-info
+dist/
+build/

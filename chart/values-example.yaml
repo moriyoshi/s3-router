@@ -1,0 +1,264 @@
+# Example values for s3-router Helm chart deployment
+
+replicaCount: 2
+
+image:
+  repository: my-registry.azurecr.io/s3-router
+  pullPolicy: IfNotPresent
+  tag: "v0.1.0"
+
+service:
+  type: LoadBalancer
+  port: 80
+  targetPort: 8080
+  adminPort: 9090
+
+# Ingress configuration
+ingress:
+  enabled: true
+  className: "nginx"
+  annotations:
+    cert-manager.io/cluster-issuer: "letsencrypt-prod"
+  hosts:
+    - host: s3-router.example.com
+      paths:
+        - path: /
+          pathType: Prefix
+  tls:
+    - secretName: s3-router-tls
+      hosts:
+        - s3-router.example.com
+
+# Resource configuration
+resources:
+  limits:
+    cpu: 1000m
+    memory: 1Gi
+  requests:
+    cpu: 250m
+    memory: 256Mi
+
+autoscaling:
+  enabled: true
+  minReplicas: 2
+  maxReplicas: 5
+  targetCPUUtilizationPercentage: 70
+
+# S3 Router configuration
+config:
+  featureFlags:
+    enable_caching: true
+    enable_metrics: true
+
+  # Backend S3 configurations - endpoints and bucket info
+  # Note: credentials should be specified in the credentials section below
+  backends:
+    aws-us-east:
+      endpoint: s3.us-east-1.amazonaws.com
+      bucket: my-bucket-east
+      prefix: data/
+    
+    aws-eu-west:
+      endpoint: s3.eu-west-1.amazonaws.com
+      bucket: my-bucket-eu
+      prefix: data/
+
+    minio-local:
+      endpoint: minio.local:9000
+      bucket: local-bucket
+      prefix: staging/
+
+  # Routing rules
+  buckets:
+    - name: my-s3-virtual-bucket
+      routes:
+        # Production route to AWS US East
+        - path: ^prod/(?P<rest>.*)
+          backend: aws-us-east
+          rewrite:
+            - result: production/$rest
+
+        # EU route to AWS EU West
+        - path: ^eu/(?P<rest>.*)
+          backend: aws-eu-west
+          rewrite:
+            - result: european/$rest
+
+        # Staging route to MinIO
+        - path: ^staging/(?P<rest>.*)
+          backend: minio-local
+          rewrite:
+            - result: $rest
+
+        # Special handling for archives
+        - path: ^archive/.*
+          backend: aws-us-east
+          rewrite:
+            - pattern: ^archive/([0-9]{4})/(.*)
+              result: archives/$1/$2
+
+# Credentials to be stored in Kubernetes Secret
+# These are injected from values and securely stored
+credentials:
+  aws-us-east:
+    access_key_id: "AKIA1234567890ABCDEF"
+    secret_access_key: "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY"
+    assume_role: ""
+    session_token: ""
+
+  aws-eu-west:
+    access_key_id: "AKIA9876543210FEDCBA"
+    secret_access_key: "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY2"
+    assume_role: ""
+    session_token: ""
+
+  minio-local:
+    access_key_id: "minioadmin"
+    secret_access_key: "minioadmin"
+    assume_role: ""
+    session_token: ""
+
+server:
+  listenPort: 8080
+  adminPort: 9090
+  # HTTP server timeouts with examples
+  read_timeout: 30s       # HTTP read timeout (default: 15s) - supports Go duration format or seconds as number
+  write_timeout: 30s      # HTTP write timeout (default: 15s) - supports Go duration format or seconds as number
+  idle_timeout: 60s       # HTTP idle timeout (default: 60s) - supports Go duration format or seconds as number
+  max_body_size: 4GB      # Max body size (default: 4GB) - supports units (GB, MB, KB, B) or raw bytes
+  route_cache_size: 1k    # Route cache size (default: 1000) - supports units (k, m) or raw number
+
+# Authentication configuration
+auth:
+  default_region: us-east-1      # Default AWS region for SigV4 verification (default: us-east-1)
+  clock_skew_leeway: 15m          # Clock skew tolerance in Go duration format (default: 15m)
+
+# Pod security and resource constraints
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 65532
+  runAsGroup: 65532
+  fsGroup: 65532
+
+securityContext:
+  allowPrivilegeEscalation: false
+  capabilities:
+    drop:
+      - ALL
+  readOnlyRootFilesystem: true
+
+# Health checks
+livenessProbe:
+  httpGet:
+    path: /health
+    port: 9090
+  initialDelaySeconds: 15
+  periodSeconds: 10
+  timeoutSeconds: 5
+  failureThreshold: 3
+
+readinessProbe:
+  httpGet:
+    path: /health
+    port: 9090
+  initialDelaySeconds: 5
+  periodSeconds: 5
+  timeoutSeconds: 3
+  failureThreshold: 2
+
+# Node affinity for pod placement
+affinity:
+  podAntiAffinity:
+    preferredDuringSchedulingIgnoredDuringExecution:
+      - weight: 100
+        podAffinityTerm:
+          labelSelector:
+            matchExpressions:
+              - key: app.kubernetes.io/name
+                operator: In
+                values:
+                  - s3-router
+          topologyKey: kubernetes.io/hostname
+
+nodeSelector:
+  workload: s3-router
+
+# ============================================================================
+# OpenTelemetry Configuration Examples
+# ============================================================================
+
+# Example 1: Jaeger Integration (local development)
+# ---
+# opentelemetry:
+#   enabled: true
+#   exporter:
+#     endpoint: "http://jaeger:4318"
+#     timeout: "10s"
+#   traces:
+#     exporter: "otlp"
+#     sampler: "always_on"
+#     samplerArg: "1.0"
+#   metrics:
+#     exporter: "otlp"
+#   service:
+#     name: "s3-router"
+#     version: "0.1.0"
+#   sdk:
+#     disabled: false
+
+# Example 2: OpenTelemetry Collector Integration
+# ---
+# opentelemetry:
+#   enabled: true
+#   exporter:
+#     endpoint: "http://otel-collector:4318"
+#     timeout: "10s"
+#   traces:
+#     exporter: "otlp"
+#     sampler: "always_on"
+#     samplerArg: "1.0"
+#   metrics:
+#     exporter: "otlp"
+#   service:
+#     name: "s3-router"
+#     version: "0.1.0"
+#   sdk:
+#     disabled: false
+
+# Example 3: Production with Sampling (10% trace sampling)
+# ---
+# opentelemetry:
+#   enabled: true
+#   exporter:
+#     endpoint: "http://otel-collector:4318"
+#     timeout: "10s"
+#   traces:
+#     exporter: "otlp"
+#     sampler: "traceidratio"        # Sample 10% of traces
+#     samplerArg: "0.1"               # Sample rate: 0-1
+#   metrics:
+#     exporter: "otlp"
+#   service:
+#     name: "s3-router"
+#     version: "0.1.0"
+#   sdk:
+#     disabled: false
+
+# Example 4: Disabled (useful for testing)
+# ---
+# opentelemetry:
+#   enabled: false
+#   exporter:
+#     endpoint: "http://localhost:4318"
+#     timeout: "10s"
+#   traces:
+#     exporter: "otlp"
+#     sampler: "always_on"
+#     samplerArg: "1.0"
+#   metrics:
+#     exporter: "otlp"
+#   service:
+#     name: "s3-router"
+#     version: "0.1.0"
+#   sdk:
+#     disabled: false

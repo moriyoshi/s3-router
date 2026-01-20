@@ -1,0 +1,107 @@
+# Test-specific values for s3-router helm chart
+
+replicaCount: 1
+
+image:
+  repository: s3-router
+  pullPolicy: Never  # Use pre-loaded image
+  tag: "integration-test"
+
+podAnnotations: {}
+
+resources:
+  limits:
+    cpu: 200m
+    memory: 256Mi
+  requests:
+    cpu: 50m
+    memory: 64Mi
+
+# Credentials for s3-router principals
+credentials:
+  test:
+    secret_key: test
+    enabled: true
+    created_at: "2024-01-01T00:00:00Z"
+
+# Configuration for s3-router
+config:
+  featureFlags:
+    enable_caching: true
+    enable_metrics: true
+
+  # Test backend pointing to moto (running on same cluster)
+  backends:
+    moto-backend:
+      endpoint: "http://moto:5000/${bucket}/${key}"
+      bucket: test-bucket
+      credentials:
+        type: inline
+        access_key_id: test
+        secret_access_key: test
+    moto-backend-prod:
+      endpoint: "http://moto:5000/${bucket}/${key}"
+      bucket: backend-prod
+      credentials:
+        type: inline
+        access_key_id: test
+        secret_access_key: test
+    moto-backend-staging:
+      endpoint: "http://moto:5000/${bucket}/${key}"
+      bucket: backend-staging
+      credentials:
+        type: inline
+        access_key_id: test
+        secret_access_key: test
+    moto-backend-archive:
+      endpoint: "http://moto:5000/${bucket}/${key}"
+      bucket: backend-archive
+      credentials:
+        type: inline
+        access_key_id: test
+        secret_access_key: test
+
+
+  # Test routing rules
+  buckets:
+    - name: test-bucket
+      routes:
+        - path: ^(.*)
+          backend: moto-backend
+          rewrite:
+            - result: $1
+    - name: backend-prod
+      routes:
+        - path: ^(.*)
+          backend: moto-backend-prod
+          rewrite:
+            - result: $1
+    - name: backend-staging
+      routes:
+        - path: ^(.*)
+          backend: moto-backend-staging
+          rewrite:
+            - result: $1
+    - name: backend-archive
+      routes:
+        - path: ^(.*)
+          backend: moto-backend-archive
+          rewrite:
+            - result: $1
+
+server:
+  listenPort: 8080
+  adminPort: 9090
+
+livenessProbe:
+  httpGet:
+    path: /healthz
+  initialDelaySeconds: 5
+  periodSeconds: 5
+
+readinessProbe:
+  httpGet:
+    path: /healthz
+  initialDelaySeconds: 3
+  periodSeconds: 3
+

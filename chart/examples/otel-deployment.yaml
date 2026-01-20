@@ -1,0 +1,70 @@
+# Example: Deploying s3-router with OpenTelemetry integration
+# 
+# This example shows how to deploy s3-router with distributed tracing
+# enabled and configured to export to different backends.
+
+---
+# Example 1: Deploy with Jaeger (all-in-one)
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: s3-router
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: jaeger
+---
+# Jaeger Deployment (simplified for example)
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: jaeger
+  namespace: jaeger
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: jaeger
+  template:
+    metadata:
+      labels:
+        app: jaeger
+    spec:
+      containers:
+      - name: jaeger
+        image: jaegertracing/all-in-one:latest
+        ports:
+        - containerPort: 6831
+          protocol: UDP
+          name: jaeger-compact
+        - containerPort: 4318
+          protocol: TCP
+          name: otlp-http
+        - containerPort: 16686
+          protocol: TCP
+          name: jaeger-ui
+        env:
+        - name: COLLECTOR_OTLP_ENABLED
+          value: "true"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: jaeger
+  namespace: jaeger
+spec:
+  ports:
+  - port: 4318
+    targetPort: 4318
+    protocol: TCP
+    name: otlp-http
+  - port: 16686
+    targetPort: 16686
+    protocol: TCP
+    name: ui
+  selector:
+    app: jaeger
+---
+# S3-Router values for OTel configuration
+# Use with: helm install my-s3-router ./chart -f examples/otel-jaeger-values.yaml

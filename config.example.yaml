@@ -1,0 +1,127 @@
+backends:
+  # Example 1: Virtual-host-style with endpoint template (bucket in hostname)
+  # Template placeholders: ${bucket}, ${region}, ${key}, ${fips}, ${globalEndpoint}, ${accelerate}, ${dualStack}, ${usePathStyle}
+  # Supports: ${name:-default} syntax for default values
+  backend1:
+    endpoint: "https://${bucket}.s3.${region}.amazonaws.com/${key}"
+    bucket: my-bucket-1
+    prefix: prefix1/
+    credentials:
+      type: file
+      path: /etc/s3router/backend1-creds.json
+
+  # Example 2: Path-style endpoint (bucket in path)
+  backend2:
+    endpoint: "https://s3.${region}.amazonaws.com/${bucket}/${key}"
+    bucket: my-bucket-2
+    prefix: prefix2/
+    credentials:
+      type: aws-secrets-manager
+      secret_name: s3-router/backend2-credentials
+      region: us-west-2
+
+  # Example 3: Custom endpoint (e.g., MinIO, S3-compatible)
+  backend3:
+    endpoint: "https://minio.example.com/${bucket}/${key}"
+    bucket: my-bucket-3
+    region: us-east-1
+    credentials:
+      type: file
+      path: /etc/s3router/backend3-creds.json
+
+  # Example 4: Default endpoint (omitted) - uses SDK endpoint resolver
+  # Uses virtual-host-style AWS S3 with regional endpoints
+  backend4:
+    bucket: my-bucket-4
+    credentials:
+      type: default
+
+  # Example 5: With backend-specific region (uses SDK endpoint resolver)
+  backend5:
+    bucket: my-bucket-5
+    region: eu-west-1
+    # Resolved to AWS regional endpoint using SDK
+    credentials:
+      type: inline
+      access_key_id: AKIA...
+      secret_access_key: ...
+      session_token: ...  # optional
+
+  # Example 6: With endpoint options (FIPS, DualStack, Accelerate, GlobalEndpoint)
+  # These options are only used when endpoint template is not specified
+  backend6:
+    bucket: my-bucket-6
+    region: us-east-1
+    use_fips: true              # Enable FIPS endpoints
+    use_dual_stack: true        # Enable IPv4 and IPv6 dual-stack endpoints
+    use_global_endpoint: false  # Use global endpoint (default: true)
+    accelerate: true            # Enable S3 Transfer Acceleration
+    credentials:
+      type: default
+
+  # Example 7: Template with default region fallback
+  backend7:
+    endpoint: "https://s3.${region:-us-east-1}.custom.example.com/${bucket}/${key}"
+    bucket: my-bucket-7
+    credentials:
+      type: file
+      path: /etc/s3router/backend7-creds.json
+
+  # Example 8: Conditional FIPS endpoint
+  backend8:
+    endpoint: "https://s3${fips:+-fips}.${region}.amazonaws.com/${bucket}/${key}"
+    bucket: my-bucket-8
+    region: us-east-1
+    use_fips: true
+    credentials:
+      type: default
+
+buckets:
+  - name: my-virtual-bucket
+    routes:
+      - path: ^foo/(?P<rest>.*)
+        backend: backend1
+        rewrite:
+          - result: $rest
+      
+      - path: ^bar/.*
+        backend: backend2
+        rewrite:
+          - pattern: ^bar/special/(.*)
+            result: SPECIAL/$1
+          - pattern: ^bar/(?P<patternInRewriter>.*)
+            result: $patternInRewriter
+
+credentials_store: credentials.json
+
+# Server configuration (all optional, defaults shown)
+server:
+  # Timeouts support Go duration format (30s, 2m, 1h) or raw seconds
+  read_timeout: 30s       # HTTP read timeout (default: 15s)
+  write_timeout: 30s      # HTTP write timeout (default: 15s)
+  idle_timeout: 60s       # HTTP idle timeout (default: 60s)
+  # Size supports units: B, KB, MB, GB or raw bytes
+  max_body_size: 4GB        # Max body size (default: 4GB)
+  # Count supports units: k, m or raw number
+  route_cache_size: 1k            # LRU cache size for route matching (default: 1000)
+
+# Authentication configuration (all optional, defaults shown)
+auth:
+  default_region: us-east-1           # Default AWS region for SigV4 verification
+  clock_skew_leeway: 15m               # Clock skew tolerance (Go duration format, default: 15m)
+
+features:
+  enable_caching: true
+  enable_metrics: true
+
+# Virtual host configuration (optional)
+virtual_hosts:
+  enabled: false                    # Enable/disable virtual host style (default: false)
+  hosts:                           # List of hosts to treat as virtual hosts
+    - "localhost"                  # String: bucket name = "localhost"
+    - "localhost:8080"             # Host with specific port, bucket = "localhost:8080"
+    - "my-bucket.s3.example.com"   # S3-style virtual host, bucket = "my-bucket.s3.example.com"
+    - api.local: "my-bucket"       # Map: explicit bucket name mapping
+    - "*.s3.localhost"             # Wildcard - bucket extracted from subdomain (e.g., "mybucket.s3.localhost" -> "mybucket")
+    - "*.api.example.com:8080"     # Wildcard with specific port
+    - "*.custom.local": "default-bucket"  # Wildcard with explicit bucket mapping

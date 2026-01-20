@@ -1,0 +1,14 @@
+bin/
+*.o
+*.a
+*.so
+.DS_Store
+coverage.out
+.env
+.env.local
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.agent/tmp

@@ -1,0 +1,58 @@
+version: "2"
+
+linters:
+  enable:
+    - govet         # Reports suspicious constructs
+    - ineffassign   # Detect ineffectual assignments
+    - staticcheck   # Static analysis checks
+    - unused        # Check for unused code
+    - gocyclo       # Check cyclomatic complexity
+    - goconst       # Find repeated strings that could be constants
+    - misspell      # Find misspelled English words
+  settings:
+    errcheck:
+      check-type-assertions: true
+    
+    govet:
+      enable-all: true
+      disable:
+        - fieldalignment
+        - shadow
+    
+    gocyclo:
+      min-complexity: 20
+    
+    goconst:
+      min-len: 3
+      min-occurrences: 3
+    
+    misspell:
+      locale: US
+    
+    lll:
+      line-length: 120
+      tab-width: 4
+    
+    unparam:
+      check-exported: false
+  exclusions:
+    rules:
+      # Exclude some linters from running on tests files
+      - path: .*_test\.go$
+        linters:
+          - gocyclo
+          - errcheck
+          - gosec
+          - goconst
+      
+      # Exclude line length check for long strings
+      - linters:
+          - lll
+        source: "^//go:generate "
+    paths:
+      - vendor
+      - bin
+      - .aws-sam
+
+run:
+  tests: true

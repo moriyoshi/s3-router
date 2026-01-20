@@ -1,0 +1,235 @@
+# Default values for s3-router Helm chart
+
+replicaCount: 1
+
+image:
+  repository: s3-router
+  pullPolicy: IfNotPresent
+  tag: "latest"
+
+imagePullSecrets: []
+nameOverride: ""
+fullnameOverride: ""
+
+serviceAccount:
+  create: true
+  annotations: {}
+  name: ""
+
+podAnnotations: {}
+
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 65532
+  runAsGroup: 65532
+  fsGroup: 65532
+
+securityContext:
+  allowPrivilegeEscalation: false
+  capabilities:
+    drop:
+      - ALL
+  readOnlyRootFilesystem: true
+
+service:
+  type: ClusterIP
+  port: 80
+  targetPort: 8080
+  adminPort: 9090
+
+ingress:
+  enabled: false
+  className: ""
+  annotations: {}
+  hosts:
+    - host: chart-example.local
+      paths:
+        - path: /
+          pathType: Prefix
+  tls: []
+
+resources:
+  limits:
+    cpu: 500m
+    memory: 512Mi
+  requests:
+    cpu: 100m
+    memory: 128Mi
+
+autoscaling:
+  enabled: false
+  minReplicas: 1
+  maxReplicas: 10
+  targetCPUUtilizationPercentage: 80
+
+nodeSelector: {}
+
+tolerations: []
+
+affinity: {}
+
+# Configuration for s3-router
+config:
+  # Feature flags
+  features:
+    enable_caching: true
+    enable_metrics: true
+
+  # S3 backends configuration
+  backends:
+    {}
+    # Example backends with different credential types:
+    #
+    # backend1:
+    #   endpoint: s3.us-east-1.amazonaws.com
+    #   bucket: my-bucket-1
+    #   prefix: prefix1/
+    #   credentials:
+    #     type: file
+    #     path: /etc/s3router/backend1-creds.json
+    #
+    # backend2:
+    #   endpoint: s3.us-west-2.amazonaws.com
+    #   bucket: my-bucket-2
+    #   credentials:
+    #     type: aws-secrets-manager
+    #     secret_name: s3-router/backend2-credentials
+    #     region: us-west-2
+    #
+    # backend3:
+    #   endpoint: s3.eu-west-1.amazonaws.com
+    #   bucket: my-bucket-3
+    #   credentials:
+    #     type: default  # Uses AWS SDK default chain (env vars, shared credentials, IMDS)
+    #
+    # backend4:
+    #   bucket: my-bucket-4
+    #   credentials:
+    #     type: file
+    #     path: /etc/s3router/backend4-creds.json
+    #     assume_role:
+    #       role_arn: arn:aws:iam::123456789:role/S3RouterBackend4Role
+    #       session_name: s3-router-backend4
+    #       duration: 3600
+    #
+    # backend5:
+    #   bucket: my-bucket-5
+    #   credentials:
+    #     type: inline  # Not recommended for production
+    #     access_key_id: AKIA...
+    #     secret_access_key: ...
+    #     session_token: ...  # optional
+
+  # Routing rules
+  buckets:
+    []
+    # Example routing rules:
+    # - name: my-virtual-bucket
+    #   routes:
+    #     - path: ^foo/(?P<rest>.*)
+    #       backend: backend1
+    #       rewrite:
+    #         - result: $rest
+    #     - path: ^bar/.*
+    #       backend: backend2
+    #       rewrite:
+    #         - pattern: ^bar/special/(.*)
+    #           result: SPECIAL/$1
+    #         - pattern: ^bar/(?P<patternInRewriter>.*)
+    #           result: $patternInRewriter
+
+# Client authentication credentials (credentials_store)
+# These are credentials for clients connecting TO s3-router (not backend credentials)
+# Format: map of access_key_id -> credential info
+# Stored as a Kubernetes Secret and mounted at /etc/s3router/credentials/credentials.json
+credentials: {}
+  # Example:
+  # AKIAIOSFODNN7EXAMPLE:
+  #   secret_key: "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY"
+  #   enabled: true
+  #   created_at: "2024-01-01T00:00:00Z"
+  # AKIATESTKEYEXAMPLE01:
+  #   secret_key: "test_secret_key_12345678901234567890"
+  #   enabled: true
+  #   created_at: "2024-01-01T00:00:00Z"
+
+# Server configuration
+server:
+  listenPort: 8080
+  adminPort: 9090
+  # HTTP server timeouts
+  # read_timeout: 15s     # Go duration format (e.g., 30s, 2m, 1h) or seconds as a number
+  # write_timeout: 15s    # Go duration format or seconds as a number
+  # idle_timeout: 60s     # Go duration format or seconds as a number
+  # max_body_size: 4GB    # Size format (e.g., 4GB, 512MB, 100KB) or raw bytes
+  # route_cache_size: 1k  # Count format (e.g., 1k, 1m) or raw number
+
+# Authentication configuration (optional)
+# auth:
+#   default_region: us-east-1      # Default AWS region for SigV4 verification
+#   clock_skew_leeway: 15m          # Clock skew tolerance in Go duration format
+
+# Virtual host configuration (optional)
+# virtualHosts:
+#   enabled: false                 # Enable/disable virtual host style (default: false)
+#   hosts:                         # List of hosts to treat as virtual hosts
+#     - "localhost"                # String: bucket name = "localhost"
+#     - "localhost:8080"           # Host with specific port
+#     - "my-bucket.s3.example.com" # S3-style virtual host
+#     - api.local: "my-bucket"     # Map: explicit bucket name mapping
+#     - "*.s3.localhost"           # Wildcard - bucket extracted from subdomain
+#     - "*.api.example.com:8080"   # Wildcard with specific port
+#     - "*.custom.local": "default-bucket"  # Wildcard with explicit bucket mapping
+
+# OpenTelemetry configuration
+opentelemetry:
+  # Enable/disable OpenTelemetry instrumentation
+  enabled: true
+  
+  # OTLP HTTP exporter configuration
+  exporter:
+    # OTLP endpoint (e.g., http://localhost:4318, http://jaeger:4318, http://otel-collector:4318)
+    endpoint: "http://localhost:4318"
+    # Timeout for OTLP exporter requests
+    timeout: "10s"
+  
+  # Trace configuration
+  traces:
+    # Exporter type (otlp)
+    exporter: "otlp"
+    # Sampler type: always_on, always_off, traceidratio
+    sampler: "always_on"
+    # Sampler argument (only used for traceidratio, range 0-1)
+    samplerArg: "1.0"
+  
+  # Metrics configuration
+  metrics:
+    # Exporter type (otlp)
+    exporter: "otlp"
+  
+  # Service identification
+  service:
+    name: "s3-router"
+    version: "0.1.0"
+  
+  # SDK configuration
+  sdk:
+    disabled: false
+
+# Pod lifecycle
+lifecycle:
+  postStart: null
+  preStop: null
+
+# Health checks
+livenessProbe:
+  httpGet:
+    path: /healthz
+  initialDelaySeconds: 10
+  periodSeconds: 10
+
+readinessProbe:
+  httpGet:
+    path: /healthz
+  initialDelaySeconds: 5
+  periodSeconds: 5

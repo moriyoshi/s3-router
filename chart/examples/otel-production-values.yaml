@@ -1,0 +1,117 @@
+# Example Values: S3-Router with OTel in Production
+# 
+# Features:
+#   - 10% trace sampling (via traceidratio)
+#   - OTLP Collector backend
+#   - Production resource limits
+#   - Autoscaling enabled
+# 
+# Deploy with:
+#   helm install my-s3-router ./chart -f examples/otel-production-values.yaml
+
+replicaCount: 3
+
+image:
+  repository: s3-router
+  tag: "0.1.0"  # Use specific version, not latest
+  pullPolicy: IfNotPresent
+
+# ============================================================================
+# OpenTelemetry Configuration - Production Setup
+# ============================================================================
+opentelemetry:
+  enabled: true
+  exporter:
+    # OTLP Collector endpoint
+    endpoint: "http://otel-collector:4318"
+    timeout: "10s"
+  traces:
+    exporter: "otlp"
+    # Sample 10% of traces to reduce volume and cost
+    sampler: "traceidratio"
+    samplerArg: "0.1"
+  metrics:
+    exporter: "otlp"
+  service:
+    name: "s3-router"
+    version: "0.1.0"
+  sdk:
+    disabled: false
+
+# ============================================================================
+# S3 Router Configuration
+# ============================================================================
+config:
+  features:
+    enable_caching: true
+    enable_metrics: true
+  
+  backends:
+    aws-prod:
+      endpoint: "s3.us-east-1.amazonaws.com"
+      bucket: "prod-bucket-1"
+      prefix: "app-data/"
+      credentials:
+        type: default  # IRSA in EKS
+    
+    aws-backup:
+      endpoint: "s3.us-west-2.amazonaws.com"
+      bucket: "prod-bucket-2"
+      prefix: "backups/"
+      credentials:
+        type: default
+  
+  buckets:
+    - name: "default"
+      routes:
+        - path: "^data/.*"
+          backend: aws-prod
+        - path: "^backup/.*"
+          backend: aws-backup
+
+credentials: {}
+
+# Server configuration
+server:
+  listenPort: 8080
+  adminPort: 9090
+  read_timeout: "30s"
+  write_timeout: "30s"
+  idle_timeout: "60s"
+  route_cache_size: "10k"
+
+# Resource limits for production
+resources:
+  limits:
+    cpu: "1000m"
+    memory: "1Gi"
+  requests:
+    cpu: "500m"
+    memory: "512Mi"
+
+# Autoscaling configuration
+autoscaling:
+  enabled: true
+  minReplicas: 3
+  maxReplicas: 10
+  targetCPUUtilizationPercentage: 70
+  targetMemoryUtilizationPercentage: 80
+
+# Pod Disruption Budget for high availability
+podDisruptionBudget:
+  minAvailable: 2
+
+# Network Policy (optional, uncomment to enable)
+# networkPolicy:
+#   enabled: true
+#   ingress:
+#     - from:
+#       - namespaceSelector:
+#           matchLabels:
+#             name: ingress-nginx
+#
+# Notes:
+# - To view traces in production, configure Jaeger or another 
+#   APM platform to receive OTLP data from otel-collector
+# - Adjust samplerArg based on trace volume and storage capacity
+# - Monitor otel-collector for memory/CPU usage

@@ -1,0 +1,88 @@
+# Test-specific values for s3-router helm chart with OTel stdout exporters
+
+replicaCount: 1
+
+image:
+  repository: s3-router
+  pullPolicy: Never  # Use pre-loaded image
+  tag: "integration-test"
+
+podAnnotations: {}
+
+resources:
+  limits:
+    cpu: 200m
+    memory: 256Mi
+  requests:
+    cpu: 50m
+    memory: 64Mi
+
+# Credentials for s3-router principals
+credentials:
+  test:
+    secret_key: test
+    enabled: true
+    created_at: "2024-01-01T00:00:00Z"
+
+# ============================================================================
+# OpenTelemetry Configuration with stdout exporters for testing
+# ============================================================================
+opentelemetry:
+  enabled: true
+  exporter:
+    # Stdout exporter doesn't need an external endpoint
+    endpoint: ""
+    timeout: "10s"
+  traces:
+    exporter: "stdout"
+    # Sample all traces for testing
+    sampler: "always_on"
+    samplerArg: "1.0"
+  metrics:
+    exporter: "stdout"
+  service:
+    name: "s3-router"
+    version: "0.1.0"
+  sdk:
+    disabled: false
+
+# Configuration for s3-router
+config:
+  featureFlags:
+    enable_caching: true
+    enable_metrics: true
+
+  # Test backend pointing to moto (running on same cluster)
+  backends:
+    moto-backend:
+      endpoint: "http://moto:5000/${bucket}/${key}"
+      bucket: test-bucket
+      credentials:
+        type: inline
+        access_key_id: test
+        secret_access_key: test
+
+  # Test routing rules
+  buckets:
+    - name: test-bucket
+      routes:
+        - path: ^(.*)
+          backend: moto-backend
+          rewrite:
+            - result: $1
+
+server:
+  listenPort: 8080
+  adminPort: 9090
+
+livenessProbe:
+  httpGet:
+    path: /healthz
+  initialDelaySeconds: 5
+  periodSeconds: 5
+
+readinessProbe:
+  httpGet:
+    path: /healthz
+  initialDelaySeconds: 3
+  periodSeconds: 3

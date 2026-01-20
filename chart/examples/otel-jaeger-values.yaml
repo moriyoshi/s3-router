@@ -1,0 +1,81 @@
+# Example Values: S3-Router with Jaeger Integration
+# 
+# Deploy Jaeger first:
+#   kubectl apply -f otel-deployment.yaml
+# 
+# Then deploy s3-router:
+#   helm install my-s3-router ./chart -f examples/otel-jaeger-values.yaml
+
+replicaCount: 2
+
+image:
+  repository: s3-router
+  tag: "latest"
+  pullPolicy: IfNotPresent
+
+# ============================================================================
+# OpenTelemetry Configuration with Jaeger
+# ============================================================================
+opentelemetry:
+  enabled: true
+  exporter:
+    # Jaeger OTLP HTTP endpoint (in-cluster)
+    endpoint: "http://jaeger.jaeger.svc.cluster.local:4318"
+    timeout: "10s"
+  traces:
+    exporter: "otlp"
+    # Sample all traces for development (use traceidratio + 0.1 for production)
+    sampler: "always_on"
+    samplerArg: "1.0"
+  metrics:
+    exporter: "otlp"
+  service:
+    name: "s3-router"
+    version: "0.1.0"
+  sdk:
+    disabled: false
+
+# ============================================================================
+# S3 Router Configuration
+# ============================================================================
+config:
+  backends:
+    backend1:
+      endpoint: "s3.us-east-1.amazonaws.com"
+      bucket: "my-bucket-1"
+      prefix: "prefix1/"
+      credentials:
+        type: default
+    
+    backend2:
+      endpoint: "http://minio:9000"
+      bucket: "minio-bucket"
+      credentials:
+        type: inline
+        access_key_id: "minioadmin"
+        secret_access_key: "minioadmin"
+  
+  buckets:
+    - name: "default"
+      routes:
+        - path: "^.*"
+          backend: backend1
+
+credentials: {}
+
+server:
+  listenPort: 8080
+  adminPort: 9090
+
+resources:
+  limits:
+    cpu: 500m
+    memory: 512Mi
+  requests:
+    cpu: 100m
+    memory: 128Mi
+
+# To access Jaeger after deployment:
+# kubectl port-forward -n jaeger svc/jaeger 16686:16686
+# Open: http://localhost:16686
+# Select "s3-router" from the service dropdown to view traces
