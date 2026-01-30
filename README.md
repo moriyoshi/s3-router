@@ -173,7 +173,7 @@ endpoint: "https://s3.${region:-us-east-1}.example.com/${bucket}/${key}"
 
 When `endpoint` is omitted from the backend configuration, s3-router uses the AWS SDK's endpoint resolver. This automatically selects the correct regional or global endpoint based on:
 - The `region` field in backend config (if present)
-- Endpoint options: `use_fips`, `use_global_endpoint`, `use_dual_stack`, `accelerate`
+- Endpoint options: `use_path_style`, `use_fips`, `use_global_endpoint`, `use_dual_stack`, `accelerate`
 
 The SDK endpoint resolver supports:
 - **Regional endpoints**: `https://s3.{region}.amazonaws.com` or virtual-host style

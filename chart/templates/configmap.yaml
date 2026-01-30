@@ -13,6 +13,9 @@ data:
         {{- if $backendConfig.endpoint }}
         endpoint: {{ $backendConfig.endpoint }}
         {{- end }}
+        {{- if $backendConfig.region }}
+        region: {{ $backendConfig.region }}
+        {{- end }}
         {{- if $backendConfig.bucket }}
         bucket: {{ $backendConfig.bucket }}
         {{- end }}
@@ -24,6 +27,21 @@ data:
         {{- end }}
         {{- if $backendConfig.retries }}
         retries: {{ $backendConfig.retries }}
+        {{- end }}
+        {{- if $backendConfig.usePathStyle }}
+        use_path_style: {{ $backendConfig.usePathStyle }}
+        {{- end }}
+        {{- if $backendConfig.useFips }}
+        use_fips: {{ $backendConfig.useFips }}
+        {{- end }}
+        {{- if $backendConfig.useGlobalEndpoint }}
+        use_global_endpoint: {{ $backendConfig.useGlobalEndpoint }}
+        {{- end }}
+        {{- if $backendConfig.useDualStack }}
+        use_dual_stack: {{ $backendConfig.useDualStack }}
+        {{- end }}
+        {{- if $backendConfig.accelerate }}
+        accelerate: {{ $backendConfig.accelerate }}
         {{- end }}
         {{- if $backendConfig.credentials }}
         credentials:
