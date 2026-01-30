@@ -157,16 +157,14 @@ func (m *Manager) createBackendClient(id string, bcfg *config.BackendConfig) (*B
 		}
 	})
 
-	// Note: AWS SDK retries are disabled when circuit breaker is active.
-	// The circuit breaker provides the resilience mechanism and failure tracking.
-	// Combining both creates conflicts: AWS SDK retries retry operations inside the
-	// circuit breaker's closure, causing double-counting of failures and premature
-	// circuit trips. Instead, we disable SDK retries and let the circuit breaker
-	// handle transient failures through its open/half-open/closed state machine.
+	// AWS SDK retries are enabled to handle transient failures and redirects (3xx).
+	// The circuit breaker filters out non-fatal errors (4xx client errors like 404/403)
+	// and only counts actual backend failures (5xx, connection errors, etc.) toward
+	// circuit breaker state. This allows retries to handle transient issues while still
+	// providing failure isolation via the circuit breaker.
 	clientOptions = append(clientOptions, func(o *s3.Options) {
-		// Disable AWS SDK retries: use a retryer that never retries (1 max attempt)
 		o.Retryer = retry.NewStandard(func(opts *retry.StandardOptions) {
-			opts.MaxAttempts = 1 // No retries; rely on circuit breaker instead
+			opts.MaxAttempts = 3 // Allow retries for transient failures and redirects
 		})
 	})
 
@@ -179,7 +177,7 @@ func (m *Manager) createBackendClient(id string, bcfg *config.BackendConfig) (*B
 	// Create S3 client with options
 	s3Client := s3.NewFromConfig(cfg, clientOptions...)
 
-	// Create circuit breaker
+	// Create circuit breaker with IsSuccessful to filter non-fatal errors
 	cb := gobreaker.NewCircuitBreaker(gobreaker.Settings{
 		Name:        fmt.Sprintf("backend-%s", id),
 		MaxRequests: 3,
@@ -189,6 +187,10 @@ func (m *Manager) createBackendClient(id string, bcfg *config.BackendConfig) (*B
 			failureRatio := float64(counts.TotalFailures) / float64(counts.Requests)
 			return counts.Requests >= 3 && failureRatio >= 0.6
 		},
+		// IsSuccessful treats non-fatal S3 errors (404, 403, etc.) as successes
+		// to prevent false positives from triggering circuit breaker isolation.
+		// Only actual backend failures (5xx, network errors) count as failures.
+		IsSuccessful: IsNonFatalS3Error,
 	})
 
 	return &BackendClient{

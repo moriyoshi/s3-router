@@ -11,9 +11,11 @@
 # Practices
 
 * When you'd make summary documents for your work, be sure to write them under `./.agent/docs`, not under `/tmp`.
+* Try to write your work summary to one of the existing documents.
+* ❌ Avoid editing any existing sections of PEER_REVIEW.md. You should rather just append texts to it.
 * Temporary files should be created under `./.agent/tmp`, not under `/tmp`.
 * ❌ Don't resort to either `git checkout ...` or `git restore ...` relentlessly. Someone (or another coding agent) may have touched the files. Also, your past changes haven't been committed as you expected them to be.
-* Do not randomly create a binary under the version controlled directory through `go build ./cmd/s3router`. Always put it under `./.agent/tmp`.
+* ❌ Do not randomly create a binary under the version controlled directory through `go build ./cmd/s3router`. Always put it under `./.agent/tmp`.
 * If there's a `pyproject.toml` file, try to run the tests with `uv run pytest ...` and arbitrary scripts with `uv run python ...`.
   * ❌ If there's no `pyproject.toml`, never run a bare `pip install` out of a venv. Always use `uv pip ...` in combination with `uv venv`.
 * Use `github.com/stretchr/testify/assert` for Go code unit tests, and use pytest for integration tests.

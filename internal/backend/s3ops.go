@@ -2,8 +2,10 @@ package backend
 
 import (
 	"context"
+	"errors"
 
 	"github.com/aws/aws-sdk-go-v2/service/s3"
+	"github.com/aws/smithy-go"
 	"github.com/sony/gobreaker"
 )
 
@@ -29,8 +31,46 @@ type S3Operations interface {
 	ListObjectsV2(ctx context.Context, params *s3.ListObjectsV2Input, optFns ...func(*s3.Options)) (*s3.ListObjectsV2Output, error)
 }
 
+// IsNonFatalS3Error determines if an error is a non-fatal S3 client error that should not
+// trigger the circuit breaker. Non-fatal errors include:
+// - 404 NoSuchKey (object doesn't exist)
+// - 403 Forbidden (access denied, but S3 is operational)
+// - 400 BadRequest (malformed request, but S3 is operational)
+// - Other 4xx errors (client errors, not backend failures)
+//
+// Fatal errors that should trip the breaker:
+// - 5xx server errors
+// - Network/connectivity errors
+// - Timeouts
+// - Service unavailable (503)
+func IsNonFatalS3Error(err error) bool {
+	if err == nil {
+		return false
+	}
+
+	var ae smithy.APIError
+	if errors.As(err, &ae) {
+		code := ae.ErrorCode()
+		switch code {
+		case "NoSuchKey", "NoSuchBucket", "NotFound":
+			return true // 404 - object/bucket doesn't exist
+		case "AccessDenied", "Forbidden":
+			return true // 403 - forbidden
+		case "InvalidRequest", "BadRequest":
+			return true // 400 - bad request
+		default:
+			// If the API error isn't explicitly mapped, treat as fatal
+			return false
+		}
+	}
+
+	// Non-API errors (network, timeout, etc.) are fatal
+	return false
+}
+
 // CircuitBreakerS3Operations wraps an S3Operations implementation with a circuit breaker.
 // Failures are tracked and the breaker will reject requests if the failure rate is too high.
+// Non-fatal S3 errors (4xx client errors) do not count toward circuit breaker failures.
 type CircuitBreakerS3Operations struct {
 	inner   S3Operations
 	breaker *gobreaker.CircuitBreaker
