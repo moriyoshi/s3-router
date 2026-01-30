@@ -45,7 +45,7 @@ type S3Operations interface {
 // - Service unavailable (503)
 func IsNonFatalS3Error(err error) bool {
 	if err == nil {
-		return false
+		return true // No error means success
 	}
 
 	var ae smithy.APIError

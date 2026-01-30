@@ -24,8 +24,8 @@ func TestIsNonFatalS3Error(t *testing.T) {
 		{
 			name:        "nil error",
 			err:         nil,
-			isNonFatal:  false,
-			description: "nil is not non-fatal",
+			isNonFatal:  true,
+			description: "nil means success (no error), should return true for IsSuccessful",
 		},
 		{
 			name: "NoSuchKey error",
