@@ -15,6 +15,7 @@ type BackendConfig struct {
 	Prefix            string
 	Timeout           time.Duration
 	Retries           int
+	UsePathStyle      bool
 	UseFIPS           bool
 	UseGlobalEndpoint bool
 	UseDualStack      bool
@@ -44,6 +45,7 @@ func populateBackendConfigFromIR(ctx *Context, dst *BackendConfig, id string, sr
 	}
 	dst.Timeout = timeout
 	dst.Retries = src.Retries
+	dst.UsePathStyle = src.UsePathStyle
 	dst.UseFIPS = src.UseFIPS
 	dst.UseGlobalEndpoint = src.UseGlobalEndpoint
 	dst.UseDualStack = src.UseDualStack

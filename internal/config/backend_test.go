@@ -66,6 +66,26 @@ func TestPopulateBackendConfigFromIR(t *testing.T) {
 			expectErr: false,
 		},
 		{
+			name: "with use_path_style enabled",
+			id:   "test-backend",
+			src: &ir.BackendConfig{
+				Bucket:       "my-bucket",
+				UsePathStyle: true,
+			},
+			expectErr: false,
+		},
+		{
+			name: "with use_path_style and other flags",
+			id:   "test-backend",
+			src: &ir.BackendConfig{
+				Bucket:       "my-bucket",
+				UsePathStyle: true,
+				UseFIPS:      true,
+				Retries:      3,
+			},
+			expectErr: false,
+		},
+		{
 			name: "invalid timeout",
 			id:   "test-backend",
 			src: &ir.BackendConfig{
@@ -89,7 +109,53 @@ func TestPopulateBackendConfigFromIR(t *testing.T) {
 				assert.NoError(t, err)
 				assert.Equal(t, tt.id, dst.ID)
 				assert.Equal(t, tt.src.Bucket, dst.Bucket)
+				assert.Equal(t, tt.src.UsePathStyle, dst.UsePathStyle)
 			}
+		})
+	}
+}
+
+func TestBackendConfigUsePathStyle(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name          string
+		src           *ir.BackendConfig
+		expectEnabled bool
+	}{
+		{
+			name: "use_path_style explicitly enabled",
+			src: &ir.BackendConfig{
+				Bucket:       "my-bucket",
+				UsePathStyle: true,
+			},
+			expectEnabled: true,
+		},
+		{
+			name: "use_path_style explicitly disabled",
+			src: &ir.BackendConfig{
+				Bucket:       "my-bucket",
+				UsePathStyle: false,
+			},
+			expectEnabled: false,
+		},
+		{
+			name: "use_path_style default (not set)",
+			src: &ir.BackendConfig{
+				Bucket: "my-bucket",
+			},
+			expectEnabled: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ctx := NewContext()
+			dst := &BackendConfig{}
+			populateBackendConfigFromIR(ctx, dst, "test", tt.src)
+			err := ctx.Errors()
+
+			assert.NoError(t, err)
+			assert.Equal(t, tt.expectEnabled, dst.UsePathStyle)
 		})
 	}
 }

@@ -153,3 +153,57 @@ func TestResolvedEndpointStructure(t *testing.T) {
 	assert.Equal(t, "https", endpoint.URL.Scheme)
 	assert.Equal(t, "example.com", endpoint.URL.Host)
 }
+
+func TestEndpointResolverWithUsePathStyle(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name         string
+		template     string
+		usePathStyle bool
+		expected     string
+	}{
+		{
+			name:         "path-style with template",
+			template:     "https://s3.${region}.amazonaws.com/${bucket}/${key}",
+			usePathStyle: true,
+			expected:     "https://s3.us-east-1.amazonaws.com/my-bucket/path/to/file.txt",
+		},
+		{
+			name:         "virtual-host style with template",
+			template:     "https://${bucket}.s3.${region}.amazonaws.com/${key}",
+			usePathStyle: false,
+			expected:     "https://my-bucket.s3.us-east-1.amazonaws.com/path/to/file.txt",
+		},
+		{
+			name:         "minio path-style endpoint",
+			template:     "https://minio.example.com/${bucket}/${key}",
+			usePathStyle: true,
+			expected:     "https://minio.example.com/my-bucket/path/to/file.txt",
+		},
+	}
+
+	ctx := context.Background()
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			parsedTemplate, err := template.Parse(tt.template)
+			assert.NoError(t, err)
+
+			resolver := &EndpointResolver{
+				template: parsedTemplate,
+			}
+
+			params := EndpointResolverParams{
+				Bucket:       "my-bucket",
+				Region:       "us-east-1",
+				Key:          "path/to/file.txt",
+				UsePathStyle: tt.usePathStyle,
+			}
+
+			result, err := resolver.ResolveEndpointURL(ctx, params)
+			assert.NoError(t, err)
+			assert.NotNil(t, result)
+			assert.NotNil(t, result.URL)
+			assert.Equal(t, tt.expected, result.URL.String())
+		})
+	}
+}

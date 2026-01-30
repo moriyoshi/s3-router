@@ -35,6 +35,7 @@ type BackendConfig struct {
 	Prefix            string             `mapstructure:"prefix,omitempty"`
 	Timeout           string             `mapstructure:"timeout,omitempty"`
 	Retries           int                `mapstructure:"retries,omitempty"`
+	UsePathStyle      bool               `mapstructure:"use_path_style,omitempty"`
 	UseFIPS           bool               `mapstructure:"use_fips,omitempty"`
 	UseGlobalEndpoint bool               `mapstructure:"use_global_endpoint,omitempty"`
 	UseDualStack      bool               `mapstructure:"use_dual_stack,omitempty"`
