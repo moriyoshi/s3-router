@@ -8,10 +8,10 @@ import socket
 import subprocess
 import tempfile
 import time
-from collections.abc import Iterator as IteratorABC
+from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Callable, Iterator
+from typing import TYPE_CHECKING, Any
 
 import boto3
 import pytest
@@ -47,7 +47,7 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(level
 def kubernetes_portforward(
     v1_api: CoreV1Api,
     namespace: str,
-) -> IteratorABC[None]:
+) -> Iterator[None]:
     """Context manager that provides a socket factory for port-forwarding to a Kubernetes service.
 
     This uses the Kubernetes Python client's portforward functionality to create
