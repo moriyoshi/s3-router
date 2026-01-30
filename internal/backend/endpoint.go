@@ -11,6 +11,7 @@ import (
 	smithyendpoints "github.com/aws/smithy-go/endpoints"
 
 	"github.com/moriyoshi/s3-router/internal/config"
+	"github.com/moriyoshi/s3-router/internal/observability"
 	"github.com/moriyoshi/s3-router/internal/template"
 )
 
@@ -49,11 +50,28 @@ type EndpointResolverParams struct {
 //
 // If the template doesn't contain a scheme (http://, https://), https:// is prepended.
 func (resolver *EndpointResolver) ResolveEndpointURL(ctx context.Context, params EndpointResolverParams) (*ResolvedEndpoint, error) {
+	logger := observability.GetLoggerFromContext(ctx)
+	if logger != nil {
+		logger = logger.With(
+			"bucket", params.Bucket,
+			"region", params.Region,
+			"fips", params.UseFIPS,
+			"global_endpoint", params.UseGlobalEndpoint,
+			"accelerate", params.Accelerate,
+			"dualstack", params.UseDualStack,
+			"use_path_style", params.UsePathStyle,
+			"key", params.Key,
+		)
+	}
+
 	if resolver.template != nil {
 		// Use template-based resolution
 		url, err := resolver.resolveTemplateEndpoint(params)
 		if err != nil {
 			return nil, fmt.Errorf("invalid endpoint URL after template resolution: %w", err)
+		}
+		if logger != nil {
+			logger.Debug("resolved endpoint using template", "endpoint", url.String())
 		}
 		return &ResolvedEndpoint{
 			URL:     url,
@@ -78,6 +96,9 @@ func (resolver *EndpointResolver) ResolveEndpointURL(ctx context.Context, params
 		endpoint.URL.Path, _ = url.PathUnescape(endpoint.URL.RawPath)
 	}
 
+	if logger != nil {
+		logger.Debug("resolved endpoint using AWS SDK's endpoint resolver", "endpoint", endpoint.URL.String())
+	}
 	return endpoint, nil
 }
 
