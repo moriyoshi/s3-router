@@ -23,6 +23,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import TYPE_CHECKING
 
 import pytest
+import requests
 
 if TYPE_CHECKING:
     from types_boto3_s3 import S3Client
@@ -82,6 +83,39 @@ class TestS3BucketOperations:
         assert "backend-1" in bucket_names
         assert "backend-2" in bucket_names
         assert "virtual-bucket" in bucket_names
+
+    def test_list_buckets_requires_authentication(self, s3router_with_moto: S3RouterWithMoto) -> None:
+        """Test that ListBuckets requires authentication (no auth bypass)."""
+        router_url = s3router_with_moto["router_url"]
+
+        # Make unauthenticated request to ListBuckets
+        response = requests.get(router_url + "/", timeout=5)
+
+        # Should return 401 Unauthorized (authentication required)
+        assert response.status_code == 401, f"Expected 401, got {response.status_code}. Response: {response.text}"
+        assert "WWW-Authenticate" in response.headers, "Expected WWW-Authenticate header in 401 response"
+
+    def test_create_bucket_requires_authentication(self, s3router_with_moto: S3RouterWithMoto) -> None:
+        """Test that CreateBucket requires authentication."""
+        router_url = s3router_with_moto["router_url"]
+
+        # Make unauthenticated PUT request to create a bucket
+        response = requests.put(router_url + "/test-new-bucket", timeout=5)
+
+        # Should return 401 Unauthorized
+        assert response.status_code == 401, f"Expected 401, got {response.status_code}. Response: {response.text}"
+        assert "WWW-Authenticate" in response.headers, "Expected WWW-Authenticate header in 401 response"
+
+    def test_delete_bucket_requires_authentication(self, s3router_with_moto: S3RouterWithMoto) -> None:
+        """Test that DeleteBucket requires authentication."""
+        router_url = s3router_with_moto["router_url"]
+
+        # Make unauthenticated DELETE request to delete a bucket
+        response = requests.delete(router_url + "/test-bucket", timeout=5)
+
+        # Should return 401 Unauthorized
+        assert response.status_code == 401, f"Expected 401, got {response.status_code}. Response: {response.text}"
+        assert "WWW-Authenticate" in response.headers, "Expected WWW-Authenticate header in 401 response"
 
 
 class TestS3CRUDOperations:

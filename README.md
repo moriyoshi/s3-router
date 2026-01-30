@@ -516,13 +516,11 @@ You can override the automatic detection with the `-log-format` flag:
 
 ### Authentication & Authorization
 
-s3-router implements **SigV4 signature verification** on object operations (GET, PUT, DELETE, etc.). 
-
-**Note:** Bucket-level operations (ListBuckets, CreateBucket, DeleteBucket) bypass authentication and return policy-driven responses for compatibility with S3 clients that expect these operations.
+s3-router implements **SigV4 signature verification** on all S3 operations. 
 
 #### Authenticated Operations (Require SigV4 Signature)
 
-All object operations require authentication:
+All operations require authentication, including:
 
 - **Object Operations**: GetObject, PutObject, DeleteObject, HeadObject, CopyObject
 - **Multi-part Operations**: CreateMultipartUpload, UploadPart, CompleteMultipartUpload, AbortMultipartUpload, ListParts

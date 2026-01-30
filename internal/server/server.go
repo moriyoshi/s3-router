@@ -166,9 +166,34 @@ func (s *Server) handleBucketOperations(logger *slog.Logger, w http.ResponseWrit
 		return false, nil
 	}
 
-	logger.Info("bucket operation intercepted", "operation", operation, "bucket", bucketName)
+	// Verify authentication for bucket operations
+	authCtx, err := s.Verifier.VerifyRequest(r)
+	if err != nil {
+		logger.Warn("auth verification failed", "error", err)
+		if authErr, ok := err.(*AuthError); ok {
+			switch authErr.Code {
+			case AuthErrorMissingToken:
+				return true, NewHTTPError("Missing Authorization header", http.StatusUnauthorized, "WWW-Authenticate", `AWS4-HMAC-SHA256`)
+			case AuthErrorInvalidAuthHeader, AuthErrorMissingDateHeader, AuthErrorInvalidDateHeader:
+				return true, NewHTTPError("Invalid authentication header", http.StatusBadRequest)
+			case AuthErrorInvalidAccessKeyId:
+				return true, NewHTTPError("The AWS Access Key Id you provided does not exist in our records", http.StatusForbidden)
+			case AuthErrorSignatureMismatch:
+				return true, NewHTTPError("The authorization signature provided is invalid", http.StatusForbidden)
+			case AuthErrorTimeTooSkewed:
+				return true, NewHTTPError("Request timestamp too far from current time", http.StatusForbidden)
+			default:
+				return true, NewHTTPError("Authentication failed", http.StatusForbidden)
+			}
+		} else {
+			return true, NewHTTPError("Authentication failed", http.StatusForbidden)
+		}
+	}
 
-	var err error
+	if !authCtx.IsAuthenticated {
+		return true, NewHTTPError("Missing Authorization header", http.StatusUnauthorized, "WWW-Authenticate", `AWS4-HMAC-SHA256`)
+	}
+
 	switch operation {
 	case bucket.OperationListBuckets:
 		if err = s.BucketOpsHandler.HandleListBuckets(w); err != nil {

@@ -155,8 +155,8 @@ The s3router's ListObjects implementation uses a **"list-all-and-filter"** appro
 
 - Full SigV4 verification for both header-based and query-based signatures
 - Static credential store is file-based JSON with enabled/disabled flags
-- Authentication is enforced for object operations and ListObjectsV2
-- Bucket-level control-plane operations (ListBuckets/Create/Delete) are intercepted before auth
+- Authentication is enforced for all operations including bucket-level operations
+- Bucket-level control-plane operations (ListBuckets/Create/Delete) require authentication and return policy-driven responses
 
 Credentials file format:
 ```json
