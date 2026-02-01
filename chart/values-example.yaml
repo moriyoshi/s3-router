@@ -5,7 +5,7 @@ replicaCount: 2
 image:
   repository: my-registry.azurecr.io/s3-router
   pullPolicy: IfNotPresent
-  tag: "v0.1.0"
+  tag: "v0.1.2"
 
 service:
   type: LoadBalancer
