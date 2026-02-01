@@ -1,6 +1,7 @@
 package proxy
 
 import (
+	"context"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -8,6 +9,11 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+
+	"github.com/moriyoshi/s3-router/internal/backend"
+	"github.com/moriyoshi/s3-router/internal/backend/cred"
+	"github.com/moriyoshi/s3-router/internal/config"
+	"github.com/moriyoshi/s3-router/internal/routing"
 )
 
 func TestCopyPutObjectHeaders(t *testing.T) {
@@ -514,4 +520,119 @@ func TestStreamingAwsChunkedUploadPartInvalidAmzDate(t *testing.T) {
 			}
 		})
 	}
+}
+
+// MockCredsProvider is a test helper that provides static credentials
+type MockCredsProvider struct {
+	accessKeyID     string
+	secretAccessKey string
+	sessionToken    string
+}
+
+func NewMockCredsProvider(accessKeyID, secretAccessKey, sessionToken string) *MockCredsProvider {
+	return &MockCredsProvider{
+		accessKeyID:     accessKeyID,
+		secretAccessKey: secretAccessKey,
+		sessionToken:    sessionToken,
+	}
+}
+
+func (m *MockCredsProvider) Get(ctx context.Context) (*cred.CredentialSet, error) {
+	return &cred.CredentialSet{
+		AccessKeyID:     m.accessKeyID,
+		SecretAccessKey: m.secretAccessKey,
+		SessionToken:    m.sessionToken,
+	}, nil
+}
+
+func TestStreamingAwsChunkedPutObjectWithCredsProvider(t *testing.T) {
+	t.Parallel()
+
+	// This test verifies that StreamingAwsChunkedPutObject uses CredsProvider
+	// to retrieve credentials instead of accessing bc.Credentials directly.
+	// This prevents nil pointer dereference when bc.Credentials is nil.
+
+	ctx := httptest.NewRequest(http.MethodPut, "http://s3.example.com/bucket/key", strings.NewReader("test")).Context()
+
+	// Create a mock request context
+	rc := &RequestContext{
+		Headers: http.Header{
+			"Authorization":                []string{"AWS4-HMAC-SHA256 Credential=AKIAIOSFODNN7EXAMPLE/20260201/us-east-1/s3/aws4_request, SignedHeaders=host;x-amz-content-sha256, Signature=test_seed_signature"},
+			"x-amz-date":                   []string{"20260201T000000Z"},
+			"x-amz-decoded-content-length": []string{"100"},
+			"Content-Encoding":             []string{"aws-chunked"},
+		},
+		Body: io.NopCloser(strings.NewReader("test body")),
+	}
+
+	// Create a mock backend client with nil Credentials but a valid CredsProvider
+	mockCredsProvider := NewMockCredsProvider("AKIAIOSFODNN7EXAMPLE", "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY", "")
+
+	bc := &backend.BackendClient{
+		BackendConfig: &config.BackendConfig{
+			ID:           "test-backend",
+			Endpoint:     "http://s3.example.com",
+			Bucket:       "test-bucket",
+			Region:       "us-east-1",
+			Credentials:  nil, // This is nil - the fix should handle this
+			UsePathStyle: false,
+		},
+		Region:        "us-east-1",
+		CredsProvider: mockCredsProvider,
+	}
+
+	decision := &routing.Decision{
+		RewrittenKey: "test-key",
+	}
+
+	// This should not panic with nil pointer dereference
+	// It will fail on endpoint resolution, but that's ok - we're testing credential retrieval
+	_, err := StreamingAwsChunkedPutObject(ctx, nil, bc, rc, decision)
+	assert.Error(t, err) // Expected error due to missing endpoint resolver
+	// The important part is that we didn't panic on nil pointer dereference
+}
+
+func TestStreamingAwsChunkedUploadPartWithCredsProvider(t *testing.T) {
+	t.Parallel()
+
+	// This test verifies that StreamingAwsChunkedUploadPart uses CredsProvider
+	// to retrieve credentials instead of accessing bc.Credentials directly.
+
+	ctx := httptest.NewRequest(http.MethodPut, "http://s3.example.com/bucket/key", strings.NewReader("test")).Context()
+
+	// Create a mock request context
+	rc := &RequestContext{
+		Headers: http.Header{
+			"Authorization":                []string{"AWS4-HMAC-SHA256 Credential=AKIAIOSFODNN7EXAMPLE/20260201/us-east-1/s3/aws4_request, SignedHeaders=host;x-amz-content-sha256, Signature=test_seed_signature"},
+			"x-amz-date":                   []string{"20260201T000000Z"},
+			"x-amz-decoded-content-length": []string{"100"},
+			"Content-Encoding":             []string{"aws-chunked"},
+		},
+		Body: io.NopCloser(strings.NewReader("test body")),
+	}
+
+	// Create a mock backend client with nil Credentials but a valid CredsProvider
+	mockCredsProvider := NewMockCredsProvider("AKIAIOSFODNN7EXAMPLE", "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY", "")
+
+	bc := &backend.BackendClient{
+		BackendConfig: &config.BackendConfig{
+			ID:           "test-backend",
+			Endpoint:     "http://s3.example.com",
+			Bucket:       "test-bucket",
+			Region:       "us-east-1",
+			Credentials:  nil, // This is nil - the fix should handle this
+			UsePathStyle: false,
+		},
+		Region:        "us-east-1",
+		CredsProvider: mockCredsProvider,
+	}
+
+	decision := &routing.Decision{
+		RewrittenKey: "test-key",
+	}
+
+	// This should not panic with nil pointer dereference
+	_, err := StreamingAwsChunkedUploadPart(ctx, nil, bc, rc, decision, "upload-id", "1")
+	assert.Error(t, err) // Expected error due to missing endpoint resolver
+	// The important part is that we didn't panic on nil pointer dereference
 }

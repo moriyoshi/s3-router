@@ -12,6 +12,7 @@ import (
 	"strings"
 
 	"github.com/moriyoshi/s3-router/internal/backend"
+	"github.com/moriyoshi/s3-router/internal/backend/cred"
 	"github.com/moriyoshi/s3-router/internal/observability"
 	"github.com/moriyoshi/s3-router/internal/routing"
 )
@@ -375,9 +376,15 @@ func StreamingAwsChunkedPutObject(
 		return nil, fmt.Errorf("invalid x-amz-date header: must be at least 8 characters")
 	}
 
+	// Get credentials from the backend client
+	creds, err := cred.ToAWSCredentialsProvider(bc.CredsProvider).Retrieve(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("failed to retrieve credentials: %w", err)
+	}
+
 	// Derive signing key for backend credentials
 	dateStamp := amzDate[:8]
-	signingKey := DeriveSigningKey(bc.Credentials.SecretAccessKey, dateStamp, bc.Region, "s3")
+	signingKey := DeriveSigningKey(creds.SecretAccessKey, dateStamp, bc.Region, "s3")
 
 	// Create re-encoder
 	reEncoder := NewAwsChunkedReEncoder(
@@ -480,9 +487,15 @@ func StreamingAwsChunkedUploadPart(
 		return nil, fmt.Errorf("invalid x-amz-date header: must be at least 8 characters")
 	}
 
+	// Get credentials from the backend client
+	creds, err := cred.ToAWSCredentialsProvider(bc.CredsProvider).Retrieve(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("failed to retrieve credentials: %w", err)
+	}
+
 	// Derive signing key for backend credentials
 	dateStamp := amzDate[:8]
-	signingKey := DeriveSigningKey(bc.Credentials.SecretAccessKey, dateStamp, bc.Region, "s3")
+	signingKey := DeriveSigningKey(creds.SecretAccessKey, dateStamp, bc.Region, "s3")
 
 	// Create re-encoder
 	reEncoder := NewAwsChunkedReEncoder(

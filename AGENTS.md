@@ -12,6 +12,7 @@
 
 * When you'd make summary documents for your work, be sure to write them under `./.agent/docs`, not under `/tmp`.
 * Try to write your work summary to one of the existing documents.
+* Make sure that regression tests are ready for your fix.
 * ❌ Avoid editing any existing sections of PEER_REVIEW.md. You should rather just append texts to it.
 * Temporary files should be created under `./.agent/tmp`, not under `/tmp`.
 * ❌ Don't resort to either `git checkout ...` or `git restore ...` relentlessly. Someone (or another coding agent) may have touched the files. Also, your past changes haven't been committed as you expected them to be.
