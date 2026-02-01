@@ -522,7 +522,12 @@ func (e *Executor) executePutObject(ctx context.Context, bc *backend.BackendClie
 		return e.executeCopyObject(ctx, bc, rc, decision, rc.Headers.Get("x-amz-copy-source"))
 	}
 
-	// Check if we can use streaming path
+	// Check if we can use aws-chunked streaming path (decode + re-encode with backend creds)
+	if IsAwsChunkedEligible(rc, isCopyOperation) {
+		return StreamingAwsChunkedPutObject(ctx, rc.Request, bc, rc, decision)
+	}
+
+	// Check if we can use regular streaming path
 	if IsStreamingEligible(rc, isCopyOperation) {
 		return StreamingPutObject(ctx, rc.Request, bc, rc, decision)
 	}
@@ -947,7 +952,12 @@ func (e *Executor) executeUploadPart(ctx context.Context, bc *backend.BackendCli
 		return nil, fmt.Errorf("missing uploadId or partNumber query parameters")
 	}
 
-	// Check if we can use streaming path
+	// Check if we can use aws-chunked streaming path (decode + re-encode with backend creds)
+	if IsAwsChunkedEligible(rc, false) {
+		return StreamingAwsChunkedUploadPart(ctx, rc.Request, bc, rc, decision, uploadID, partNumber)
+	}
+
+	// Check if we can use regular streaming path
 	if IsStreamingEligible(rc, false) {
 		return StreamingUploadPart(ctx, rc.Request, bc, rc, decision, uploadID, partNumber)
 	}

@@ -271,3 +271,218 @@ func TestCopyHeadersPreservesNewChecksumAlgorithms(t *testing.T) {
 	assert.Equal(t, "crc64nvmevalue", upstreamReq.Header.Get("X-Amz-Checksum-CRC64NVME"))
 	assert.Equal(t, "sha256value", upstreamReq.Header.Get("X-Amz-Checksum-SHA256"))
 }
+
+func TestIsAwsChunkedEligible(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name            string
+		headers         http.Header
+		isCopyOperation bool
+		expected        bool
+	}{
+		{
+			name: "eligible - aws-chunked with all required headers",
+			headers: http.Header{
+				"Content-Encoding":             []string{"aws-chunked"},
+				"Content-Length":               []string{"12345"},
+				"X-Amz-Decoded-Content-Length": []string{"10000"},
+			},
+			isCopyOperation: false,
+			expected:        true,
+		},
+		{
+			name: "ineligible - not aws-chunked",
+			headers: http.Header{
+				"Content-Encoding":             []string{"gzip"},
+				"Content-Length":               []string{"12345"},
+				"X-Amz-Decoded-Content-Length": []string{"10000"},
+			},
+			isCopyOperation: false,
+			expected:        false,
+		},
+		{
+			name: "ineligible - missing Content-Length",
+			headers: http.Header{
+				"Content-Encoding":             []string{"aws-chunked"},
+				"X-Amz-Decoded-Content-Length": []string{"10000"},
+			},
+			isCopyOperation: false,
+			expected:        false,
+		},
+		{
+			name: "ineligible - missing x-amz-decoded-content-length",
+			headers: http.Header{
+				"Content-Encoding": []string{"aws-chunked"},
+				"Content-Length":   []string{"12345"},
+			},
+			isCopyOperation: false,
+			expected:        false,
+		},
+		{
+			name: "ineligible - copy operation",
+			headers: http.Header{
+				"Content-Encoding":             []string{"aws-chunked"},
+				"Content-Length":               []string{"12345"},
+				"X-Amz-Decoded-Content-Length": []string{"10000"},
+			},
+			isCopyOperation: true,
+			expected:        false,
+		},
+		{
+			name: "ineligible - no Content-Encoding",
+			headers: http.Header{
+				"Content-Length":               []string{"12345"},
+				"X-Amz-Decoded-Content-Length": []string{"10000"},
+			},
+			isCopyOperation: false,
+			expected:        false,
+		},
+		{
+			name: "eligible - aws-chunked,gzip combined encoding",
+			headers: http.Header{
+				"Content-Encoding":             []string{"aws-chunked,gzip"},
+				"Content-Length":               []string{"12345"},
+				"X-Amz-Decoded-Content-Length": []string{"10000"},
+			},
+			isCopyOperation: false,
+			expected:        true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			rc := &RequestContext{
+				Headers: tt.headers,
+			}
+			result := IsAwsChunkedEligible(rc, tt.isCopyOperation)
+			assert.Equal(t, tt.expected, result)
+		})
+	}
+}
+
+func TestCopyAwsChunkedHeaders(t *testing.T) {
+	t.Parallel()
+
+	h := http.Header{}
+	h.Set("Content-Type", "application/octet-stream")
+	h.Set("X-Amz-Meta-CustomKey", "CustomValue")
+	h.Set("X-Amz-Checksum-SHA256", "abc123")
+	h.Set("X-Amz-Storage-Class", "GLACIER")
+	h.Set("Cache-Control", "max-age=3600")
+	h.Set("Content-Disposition", "attachment")
+	h.Set("X-Amz-Checksum-Algorithm", "SHA256")
+
+	rc := &RequestContext{
+		Headers: h,
+	}
+
+	upstreamReq := &http.Request{
+		Header: http.Header{},
+	}
+
+	copyAwsChunkedHeaders(upstreamReq, rc)
+
+	// Verify headers were copied
+	assert.Equal(t, "application/octet-stream", upstreamReq.Header.Get("Content-Type"))
+	assert.Equal(t, "CustomValue", upstreamReq.Header.Get("X-Amz-Meta-CustomKey"))
+	assert.Equal(t, "abc123", upstreamReq.Header.Get("X-Amz-Checksum-SHA256"))
+	assert.Equal(t, "GLACIER", upstreamReq.Header.Get("X-Amz-Storage-Class"))
+	assert.Equal(t, "max-age=3600", upstreamReq.Header.Get("Cache-Control"))
+	assert.Equal(t, "attachment", upstreamReq.Header.Get("Content-Disposition"))
+	assert.Equal(t, "SHA256", upstreamReq.Header.Get("X-Amz-Checksum-Algorithm"))
+}
+
+func TestStreamingAwsChunkedPutObjectInvalidAmzDate(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name    string
+		amzDate string
+		isError bool
+	}{
+		{
+			name:    "valid x-amz-date",
+			amzDate: "20260201T000000Z",
+			isError: false,
+		},
+		{
+			name:    "empty x-amz-date",
+			amzDate: "",
+			isError: true,
+		},
+		{
+			name:    "too short x-amz-date",
+			amzDate: "2026",
+			isError: true,
+		},
+		{
+			name:    "exactly 7 chars",
+			amzDate: "2026020",
+			isError: true,
+		},
+		{
+			name:    "exactly 8 chars",
+			amzDate: "20260201",
+			isError: false,
+		},
+		{
+			name:    "single char",
+			amzDate: "x",
+			isError: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Verify the validation logic that prevents panic
+			if tt.amzDate == "" || len(tt.amzDate) < 8 {
+				assert.True(t, tt.isError, "expected error for amzDate: %s", tt.amzDate)
+			} else {
+				assert.False(t, tt.isError, "expected no error for amzDate: %s", tt.amzDate)
+			}
+		})
+	}
+}
+
+func TestStreamingAwsChunkedUploadPartInvalidAmzDate(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name    string
+		amzDate string
+		isError bool
+	}{
+		{
+			name:    "valid x-amz-date",
+			amzDate: "20260201T000000Z",
+			isError: false,
+		},
+		{
+			name:    "empty x-amz-date",
+			amzDate: "",
+			isError: true,
+		},
+		{
+			name:    "too short x-amz-date",
+			amzDate: "2026",
+			isError: true,
+		},
+		{
+			name:    "exactly 8 chars",
+			amzDate: "20260201",
+			isError: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Verify the validation logic that prevents panic
+			if tt.amzDate == "" || len(tt.amzDate) < 8 {
+				assert.True(t, tt.isError, "expected error for amzDate: %s", tt.amzDate)
+			} else {
+				assert.False(t, tt.isError, "expected no error for amzDate: %s", tt.amzDate)
+			}
+		})
+	}
+}

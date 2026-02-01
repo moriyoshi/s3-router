@@ -19,6 +19,9 @@ import (
 const (
 	// Payload hash for unsigned requests
 	PayloadHashUnsigned = "UNSIGNED-PAYLOAD"
+
+	// Payload hash for streaming aws-chunked uploads
+	PayloadHashStreaming = "STREAMING-AWS4-HMAC-SHA256-PAYLOAD"
 )
 
 // StreamingPutObjectOptions configures streaming PUT behavior
@@ -301,4 +304,285 @@ func IsStreamingEligible(rc *RequestContext, isCopyOperation bool) bool {
 	}
 
 	return true
+}
+
+// IsAwsChunkedEligible determines if a request uses aws-chunked encoding and can be handled.
+// AWS chunked requests are identified by Content-Encoding containing "aws-chunked".
+func IsAwsChunkedEligible(rc *RequestContext, isCopyOperation bool) bool {
+	// Must be aws-chunked encoding
+	contentEncoding := rc.Headers.Get("Content-Encoding")
+	if !IsAwsChunked(contentEncoding) {
+		return false
+	}
+
+	// Must have Content-Length (the total encoded size)
+	if rc.Headers.Get("Content-Length") == "" {
+		return false
+	}
+
+	// Must have x-amz-decoded-content-length (the actual payload size)
+	if rc.Headers.Get("x-amz-decoded-content-length") == "" {
+		return false
+	}
+
+	// Copy operations must use existing path
+	if isCopyOperation {
+		return false
+	}
+
+	return true
+}
+
+// StreamingAwsChunkedPutObject handles aws-chunked PUT requests by decoding the incoming
+// aws-chunked body and re-encoding it with backend credentials. This maintains true
+// streaming without buffering the entire body.
+func StreamingAwsChunkedPutObject(
+	ctx context.Context,
+	req *http.Request,
+	bc *backend.BackendClient,
+	rc *RequestContext,
+	decision *routing.Decision,
+) (*http.Response, error) {
+	logger := observability.GetLoggerFromContext(ctx)
+
+	// Extract seed signature from client request
+	authHeader := rc.Headers.Get("Authorization")
+	seedSignature := ExtractSeedSignature(authHeader)
+	if seedSignature == "" {
+		return nil, fmt.Errorf("missing seed signature in Authorization header")
+	}
+
+	// Get decoded content length
+	decodedContentLength := rc.Headers.Get("x-amz-decoded-content-length")
+	decodedLen, err := strconv.ParseInt(decodedContentLength, 10, 64)
+	if err != nil {
+		return nil, fmt.Errorf("invalid x-amz-decoded-content-length: %w", err)
+	}
+
+	// Get current timestamp for signing
+	amzDate := rc.Headers.Get("x-amz-date")
+	if amzDate == "" || len(amzDate) < 8 {
+		return nil, fmt.Errorf("invalid x-amz-date header: must be at least 8 characters")
+	}
+
+	// Derive signing key for backend credentials
+	dateStamp := amzDate[:8]
+	signingKey := DeriveSigningKey(bc.Credentials.SecretAccessKey, dateStamp, bc.Region, "s3")
+
+	// Create re-encoder
+	reEncoder := NewAwsChunkedReEncoder(
+		rc.Body,
+		signingKey,
+		amzDate,
+		bc.Region,
+		seedSignature,
+	)
+
+	// Calculate the re-encoded content length
+	reEncodedContentLength := CalculateReEncodedContentLength(decodedLen, 64*1024)
+
+	// Build the upstream URL using endpoint resolver
+	finalKey := bc.Prefix + decision.RewrittenKey
+	resolvedEndpoint, err := bc.EndpointResolver.ResolveEndpointURL(ctx, backend.EndpointResolverParams{
+		Bucket:            bc.Bucket,
+		Key:               finalKey,
+		Region:            bc.Region,
+		UsePathStyle:      bc.UsePathStyle,
+		UseFIPS:           bc.UseFIPS,
+		UseGlobalEndpoint: bc.UseGlobalEndpoint,
+		UseDualStack:      bc.UseDualStack,
+		Accelerate:        bc.Accelerate,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("failed to resolve endpoint: %w", err)
+	}
+
+	// Create upstream request
+	upstreamReq, err := http.NewRequestWithContext(ctx, http.MethodPut, resolvedEndpoint.URL.String(), reEncoder)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create upstream request: %w", err)
+	}
+
+	// Apply endpoint headers
+	for k, v := range resolvedEndpoint.Headers {
+		upstreamReq.Header[k] = v
+	}
+
+	// Set required headers
+	upstreamReq.Header.Set("Content-Encoding", "aws-chunked")
+	upstreamReq.Header.Set("x-amz-decoded-content-length", decodedContentLength)
+	upstreamReq.Header.Set("Content-Length", strconv.FormatInt(reEncodedContentLength, 10))
+	upstreamReq.ContentLength = reEncodedContentLength
+
+	// Copy through relevant headers
+	copyAwsChunkedHeaders(upstreamReq, rc)
+
+	// Sign the request with streaming payload hash
+	if err := SignStreamingRequest(ctx, upstreamReq, bc, PayloadHashStreaming); err != nil {
+		return nil, fmt.Errorf("failed to sign request: %w", err)
+	}
+
+	logger.Debug("streaming aws-chunked PUT",
+		"bucket", bc.Bucket,
+		"key", finalKey,
+		"decoded_length", decodedLen,
+		"encoded_length", reEncodedContentLength,
+	)
+
+	// Execute request
+	resp, err := bc.HTTPClient.Do(upstreamReq)
+	if err != nil {
+		return nil, fmt.Errorf("upstream request failed: %w", err)
+	}
+
+	return resp, nil
+}
+
+// StreamingAwsChunkedUploadPart handles aws-chunked UploadPart requests.
+func StreamingAwsChunkedUploadPart(
+	ctx context.Context,
+	req *http.Request,
+	bc *backend.BackendClient,
+	rc *RequestContext,
+	decision *routing.Decision,
+	uploadID string,
+	partNumber string,
+) (*http.Response, error) {
+	logger := observability.GetLoggerFromContext(ctx)
+
+	// Extract seed signature from client request
+	authHeader := rc.Headers.Get("Authorization")
+	seedSignature := ExtractSeedSignature(authHeader)
+	if seedSignature == "" {
+		return nil, fmt.Errorf("missing seed signature in Authorization header")
+	}
+
+	// Get decoded content length
+	decodedContentLength := rc.Headers.Get("x-amz-decoded-content-length")
+	decodedLen, err := strconv.ParseInt(decodedContentLength, 10, 64)
+	if err != nil {
+		return nil, fmt.Errorf("invalid x-amz-decoded-content-length: %w", err)
+	}
+
+	// Get current timestamp for signing
+	amzDate := rc.Headers.Get("x-amz-date")
+	if amzDate == "" || len(amzDate) < 8 {
+		return nil, fmt.Errorf("invalid x-amz-date header: must be at least 8 characters")
+	}
+
+	// Derive signing key for backend credentials
+	dateStamp := amzDate[:8]
+	signingKey := DeriveSigningKey(bc.Credentials.SecretAccessKey, dateStamp, bc.Region, "s3")
+
+	// Create re-encoder
+	reEncoder := NewAwsChunkedReEncoder(
+		rc.Body,
+		signingKey,
+		amzDate,
+		bc.Region,
+		seedSignature,
+	)
+
+	// Calculate the re-encoded content length
+	reEncodedContentLength := CalculateReEncodedContentLength(decodedLen, 64*1024)
+
+	// Build the upstream URL using endpoint resolver
+	finalKey := bc.Prefix + decision.RewrittenKey
+	resolvedEndpoint, err := bc.EndpointResolver.ResolveEndpointURL(ctx, backend.EndpointResolverParams{
+		Bucket:            bc.Bucket,
+		Key:               finalKey,
+		Region:            bc.Region,
+		UsePathStyle:      bc.UsePathStyle,
+		UseFIPS:           bc.UseFIPS,
+		UseGlobalEndpoint: bc.UseGlobalEndpoint,
+		UseDualStack:      bc.UseDualStack,
+		Accelerate:        bc.Accelerate,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("failed to resolve endpoint: %w", err)
+	}
+
+	// Add query parameters for UploadPart
+	resolvedEndpoint.URL.RawQuery = fmt.Sprintf("uploadId=%s&partNumber=%s", url.QueryEscape(uploadID), partNumber)
+
+	// Create upstream request
+	upstreamReq, err := http.NewRequestWithContext(ctx, http.MethodPut, resolvedEndpoint.URL.String(), reEncoder)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create upstream request: %w", err)
+	}
+
+	// Apply endpoint headers
+	for k, v := range resolvedEndpoint.Headers {
+		upstreamReq.Header[k] = v
+	}
+
+	// Set required headers
+	upstreamReq.Header.Set("Content-Encoding", "aws-chunked")
+	upstreamReq.Header.Set("x-amz-decoded-content-length", decodedContentLength)
+	upstreamReq.Header.Set("Content-Length", strconv.FormatInt(reEncodedContentLength, 10))
+	upstreamReq.ContentLength = reEncodedContentLength
+
+	// Sign the request with streaming payload hash
+	if err := SignStreamingRequest(ctx, upstreamReq, bc, PayloadHashStreaming); err != nil {
+		return nil, fmt.Errorf("failed to sign request: %w", err)
+	}
+
+	logger.Debug("streaming aws-chunked UploadPart",
+		"bucket", bc.Bucket,
+		"key", finalKey,
+		"part_number", partNumber,
+		"decoded_length", decodedLen,
+		"encoded_length", reEncodedContentLength,
+	)
+
+	// Execute request
+	resp, err := bc.HTTPClient.Do(upstreamReq)
+	if err != nil {
+		return nil, fmt.Errorf("upstream request failed: %w", err)
+	}
+
+	return resp, nil
+}
+
+// copyAwsChunkedHeaders copies relevant headers for aws-chunked requests.
+func copyAwsChunkedHeaders(dst *http.Request, rc *RequestContext) {
+	// Content-Type
+	if ct := rc.Headers.Get("Content-Type"); ct != "" {
+		dst.Header.Set("Content-Type", ct)
+	}
+
+	// User metadata (x-amz-meta-*)
+	for key, values := range rc.Headers {
+		if len(values) > 0 && len(key) > 11 && strings.EqualFold(key[:11], "X-Amz-Meta-") {
+			dst.Header.Set(key, values[0])
+		}
+	}
+
+	// Checksum headers (x-amz-checksum-*)
+	for key, values := range rc.Headers {
+		if len(values) > 0 && len(key) > 15 && strings.EqualFold(key[:15], "X-Amz-Checksum-") {
+			dst.Header.Set(key, values[0])
+		}
+	}
+
+	// Checksum algorithm
+	if ca := rc.Headers.Get("x-amz-checksum-algorithm"); ca != "" {
+		dst.Header.Set("x-amz-checksum-algorithm", ca)
+	}
+
+	// Storage class and ACL
+	if sa := rc.Headers.Get("x-amz-storage-class"); sa != "" {
+		dst.Header.Set("x-amz-storage-class", sa)
+	}
+	if acl := rc.Headers.Get("x-amz-acl"); acl != "" {
+		dst.Header.Set("x-amz-acl", acl)
+	}
+
+	// Cache and content disposition
+	if cc := rc.Headers.Get("Cache-Control"); cc != "" {
+		dst.Header.Set("Cache-Control", cc)
+	}
+	if cd := rc.Headers.Get("Content-Disposition"); cd != "" {
+		dst.Header.Set("Content-Disposition", cd)
+	}
 }

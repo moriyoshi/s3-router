@@ -259,3 +259,13 @@ Architecture and module separation are strong, and the routing/prefix optimizer 
 - **Status:** ✅ COMPLETE — all 14 findings addressed; 1 known limitation remains (PUT checksum trailers require buffering).
 - **Reported test status:** `go test ./...` PASS (13 packages), zero regressions.
 - Detailed remediation / verification logs were removed for brevity; use git history if you need the full narrative.
+
+## Review Note (2026-02-01)
+
+### High
+1. **Potential panic on malformed x-amz-date header**
+   - **Location:** internal/backend/proxy/streaming.go (around parse sections near previous line 369 and 474)
+   - **Issue:** The code slices amzDate[:8] after checking for empty string, but does not ensure len(amzDate) >= 8.
+   - **Impact:** Malformed or malicious headers shorter than 8 chars can trigger a runtime panic.
+   - **Fix:** Validate length before slicing, e.g. `if amzDate == "" || len(amzDate) < 8 { return nil, fmt.Errorf("invalid x-amz-date header: must be at least 8 characters") }`.
+   - **Status:** ✅ FIXED - Both StreamingAwsChunkedPutObject and StreamingAwsChunkedUploadPart now validate header length before slicing.

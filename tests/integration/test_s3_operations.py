@@ -17,6 +17,8 @@ Running Tests:
 
 from __future__ import annotations
 
+import os
+import tempfile
 import threading
 from collections.abc import Callable, Iterator
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -24,6 +26,7 @@ from typing import TYPE_CHECKING
 
 import pytest
 import requests
+import boto3.s3.transfer as s3transfer
 
 if TYPE_CHECKING:
     from types_boto3_s3 import S3Client
@@ -1560,6 +1563,70 @@ class TestRoundtrips:
         assert stored_data == test_data
         # Verify the checksum is preserved through router
         assert "ChecksumSHA256" in obj or "ETag" in obj
+
+    def test_roundtrip_s3transfer_upload(self, s3_setup: S3Client) -> None:
+        """Test roundtrip: upload using s3transfer which uses aws-chunked encoding."""
+        client = s3_setup
+
+        # Create test data large enough to trigger chunked transfer (> 8KB default threshold)
+        test_data = b"A" * (128 * 1024)  # 128KB
+
+        # Create a temporary file for the upload
+        with tempfile.NamedTemporaryFile(delete=False) as tmp:
+            tmp.write(test_data)
+            tmp_path = tmp.name
+
+        try:
+            # Use s3transfer with custom config to force chunked encoding
+            transfer_config = s3transfer.TransferConfig(
+                multipart_threshold=1024 * 1024 * 1024,  # 1GB - disable multipart
+                max_concurrency=1,
+                use_threads=False,
+            )
+
+            # Upload using transfer manager
+            transfer = s3transfer.S3Transfer(client, transfer_config)  # type: ignore[arg-type]
+            transfer.upload_file(tmp_path, "test-bucket", "s3transfer-test.bin")
+
+            # Verify the upload
+            obj = client.get_object(Bucket="test-bucket", Key="s3transfer-test.bin")
+            stored_data = obj["Body"].read()
+            assert stored_data == test_data
+            assert len(stored_data) == len(test_data)
+        finally:
+            os.unlink(tmp_path)
+
+    def test_roundtrip_s3transfer_upload_with_checksum(self, s3_setup: S3Client) -> None:
+        """Test roundtrip: s3transfer upload with checksum triggers aws-chunked encoding."""
+        client = s3_setup
+
+        # Create test data
+        test_data = b"B" * (64 * 1024)  # 64KB
+
+        with tempfile.NamedTemporaryFile(delete=False) as tmp:
+            tmp.write(test_data)
+            tmp_path = tmp.name
+
+        try:
+            transfer_config = s3transfer.TransferConfig(
+                multipart_threshold=1024 * 1024 * 1024,  # Disable multipart
+            )
+
+            # Upload with checksum algorithm - this forces aws-chunked encoding
+            transfer = s3transfer.S3Transfer(client, transfer_config)  # type: ignore[arg-type]
+            transfer.upload_file(
+                tmp_path,
+                "test-bucket",
+                "s3transfer-checksum.bin",
+                extra_args={"ChecksumAlgorithm": "SHA256"},
+            )
+
+            # Verify the upload
+            obj = client.get_object(Bucket="test-bucket", Key="s3transfer-checksum.bin")
+            stored_data = obj["Body"].read()
+            assert stored_data == test_data
+        finally:
+            os.unlink(tmp_path)
 
 
 class TestListObjectsWithRewriteAndDelimiter:

@@ -611,6 +611,34 @@ The streaming implementation consists of three main components:
   - Fails if trailer checksums are present
   - Fails for copy operations
 
+- **AWS Chunked Streaming**: `IsAwsChunkedEligible()` and `StreamingAwsChunked*()` handlers
+  - Detects aws-chunked encoding via `Content-Encoding: aws-chunked` and `x-amz-content-sha256: STREAMING-AWS4-HMAC-SHA256-PAYLOAD`
+  - Uses `AwsChunkedReEncoder` for streaming decode + re-encode with backend credentials
+  - Preserves true streaming without buffering the entire body
+  - Maintains proper signature chain from seed signature through chunk signatures
+
+#### 3. AWS Chunked Re-Encoding (`chunked.go`)
+
+The `AwsChunkedReEncoder` handles streaming aws-chunked requests by:
+
+1. **Decoding incoming chunks**: Parses `<hex-size>;chunk-signature=<sig>\r\n<data>\r\n` format
+2. **Re-signing with backend credentials**: Each chunk is signed using the backend's signing key
+3. **Maintaining signature chain**: Each chunk signature incorporates the previous signature
+4. **Streaming output**: Produces valid aws-chunked format for the backend
+
+**Key Components**:
+- `DeriveSigningKey()` - Derives kSigning key from backend secret access key
+- `ExtractSeedSignature()` - Extracts initial signature from Authorization header
+- `CalculateReEncodedContentLength()` - Pre-calculates output body size for Content-Length header
+
+**Signature Chain**:
+```
+seed signature (from client's Authorization header)
+  → chunk 1 signature (signs: prev_sig + chunk_hash)
+    → chunk 2 signature (signs: prev_sig + chunk_hash)
+      → ... → final chunk (size 0)
+```
+
 #### 3. Executor Integration (`executor.go`)
 
 - **executePutObject()**: Detects streaming eligibility before using AWS SDK
