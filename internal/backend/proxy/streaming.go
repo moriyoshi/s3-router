@@ -307,11 +307,21 @@ func IsStreamingEligible(rc *RequestContext, isCopyOperation bool) bool {
 }
 
 // IsAwsChunkedEligible determines if a request uses aws-chunked encoding and can be handled.
-// AWS chunked requests are identified by Content-Encoding containing "aws-chunked".
+// AWS chunked requests are identified by either:
+//  1. Content-Encoding containing "aws-chunked", OR
+//  2. x-amz-content-sha256 being "STREAMING-AWS4-HMAC-SHA256-PAYLOAD" (or similar streaming values)
+//     with x-amz-decoded-content-length present
 func IsAwsChunkedEligible(rc *RequestContext, isCopyOperation bool) bool {
-	// Must be aws-chunked encoding
+	// Check for aws-chunked via Content-Encoding header
 	contentEncoding := rc.Headers.Get("Content-Encoding")
-	if !IsAwsChunked(contentEncoding) {
+	hasAwsChunkedEncoding := IsAwsChunked(contentEncoding)
+
+	// Check for aws-chunked via x-amz-content-sha256 streaming payload hash
+	contentSha256 := rc.Headers.Get("x-amz-content-sha256")
+	hasStreamingPayload := strings.HasPrefix(contentSha256, "STREAMING-")
+
+	// Must be aws-chunked via either method
+	if !hasAwsChunkedEncoding && !hasStreamingPayload {
 		return false
 	}
 

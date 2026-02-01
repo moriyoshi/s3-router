@@ -78,7 +78,33 @@ Provide an HTTP server that presents an Amazon S3-compatible API surface while r
 - **Request Logging**: Duration, method, path, status code
 - **Trace ID Context**: X-Trace-ID header support for backward compatibility
 
-## 7. Key Cross-Cutting Concerns
+## 7. AWS Chunked Encoding Compatibility
+
+### Background
+
+AWS S3 supports streaming uploads with chunked payload signing via the `STREAMING-AWS4-HMAC-SHA256-PAYLOAD` algorithm. According to AWS documentation, clients should send:
+- `Content-Encoding: aws-chunked`
+- `x-amz-content-sha256: STREAMING-AWS4-HMAC-SHA256-PAYLOAD`
+- `x-amz-decoded-content-length: <original size>`
+- `Content-Length: <encoded size>`
+
+### Client Compatibility
+
+Some S3 client libraries (notably minio-go) implement streaming uploads without setting the `Content-Encoding: aws-chunked` header. They only set:
+- `x-amz-content-sha256: STREAMING-AWS4-HMAC-SHA256-PAYLOAD`
+- `x-amz-decoded-content-length: <original size>`
+
+This appears to work against AWS S3, which detects streaming mode from the `x-amz-content-sha256` header value.
+
+### Detection Strategy
+
+The s3-router detects AWS chunked encoding via **either**:
+1. `Content-Encoding` header containing `aws-chunked` (per AWS documentation), **OR**
+2. `x-amz-content-sha256` header starting with `STREAMING-` (e.g., `STREAMING-AWS4-HMAC-SHA256-PAYLOAD`, `STREAMING-UNSIGNED-PAYLOAD-TRAILER`) combined with `x-amz-decoded-content-length` header
+
+This dual detection ensures compatibility with both strictly compliant clients and clients like minio-go that omit the `Content-Encoding` header.
+
+## 8. Key Cross-Cutting Concerns
 
 - **Security**: Strict SigV4 verification (header and query), constant-time signature comparison, clock-skew protection.
 - **Performance**: Connection pooling, routing decision caching, concurrent ListObjectsV2 backend queries with prefix optimization.
@@ -86,7 +112,7 @@ Provide an HTTP server that presents an Amazon S3-compatible API surface while r
 - **Observability**: Full end-to-end tracing with OpenTelemetry, batch span exporting, configurable exporters.
 - **Testing Strategy**: Unit tests for config, routing, auth, backend, and observability; integration tests under tests/integration.
 
-## 8. Deployment Considerations
+## 9. Deployment Considerations
 
 - Docker/OCI image and Helm chart live in this repository.
 - Stateless workers; no shared cache or hot-reload.

@@ -348,6 +348,35 @@ func TestIsAwsChunkedEligible(t *testing.T) {
 			isCopyOperation: false,
 			expected:        true,
 		},
+		{
+			name: "eligible - streaming payload hash without Content-Encoding",
+			headers: http.Header{
+				"Content-Length":               []string{"176"},
+				"X-Amz-Decoded-Content-Length": []string{"4"},
+				"X-Amz-Content-Sha256":         []string{"STREAMING-AWS4-HMAC-SHA256-PAYLOAD"},
+			},
+			isCopyOperation: false,
+			expected:        true,
+		},
+		{
+			name: "eligible - streaming unsigned payload without Content-Encoding",
+			headers: http.Header{
+				"Content-Length":               []string{"176"},
+				"X-Amz-Decoded-Content-Length": []string{"4"},
+				"X-Amz-Content-Sha256":         []string{"STREAMING-UNSIGNED-PAYLOAD-TRAILER"},
+			},
+			isCopyOperation: false,
+			expected:        true,
+		},
+		{
+			name: "ineligible - streaming payload but missing decoded content length",
+			headers: http.Header{
+				"Content-Length":       []string{"176"},
+				"X-Amz-Content-Sha256": []string{"STREAMING-AWS4-HMAC-SHA256-PAYLOAD"},
+			},
+			isCopyOperation: false,
+			expected:        false,
+		},
 	}
 
 	for _, tt := range tests {

@@ -12,6 +12,7 @@ dependencies = [
     "pyyaml>=6",
     "pytest-xdist>=3",
     "requests>=2.32",
+    "minio>=7.2.20",
 ]
 
 [dependency-groups]

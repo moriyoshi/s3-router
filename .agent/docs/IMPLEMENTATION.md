@@ -224,10 +224,25 @@ All providers support optional STS role assumption via `assume_role` configurati
 
 - **Streaming** (`internal/backend/proxy/streaming.go`):
   - `StreamingPutObject`/`StreamingUploadPart` stream request bodies directly to upstream with SigV4 signing
+  - `StreamingAwsChunkedPutObject`/`StreamingAwsChunkedUploadPart` decode incoming aws-chunked data, re-sign chunks with backend credentials, and re-encode for upstream
   - `IsStreamingEligible` requires Content-Length and excludes trailer checksums/copy ops
+  - `IsAwsChunkedEligible` detects aws-chunked encoding for streaming re-signing
   - Response bodies without Content-Length are copied with a size limit
   - Request body enforcement via `http.MaxBytesReader` at ingress (configurable max_body_size)
   - CompleteMultipartUpload uses bounded buffering (1MB XML limit)
+
+- **AWS Chunked Re-Encoder** (`internal/backend/proxy/chunked.go`):
+  - `AwsChunkedReEncoder` - streaming decoder/re-encoder for aws-chunked payloads
+  - Reads client-signed chunks, extracts raw data, re-signs with backend credentials
+  - Maintains chunk signature chaining (each chunk signature depends on previous)
+  - Calculates re-encoded content length upfront without buffering entire payload
+  - Uses 64KB chunk boundaries for optimal performance
+
+- **AWS Chunked Detection** (`internal/backend/proxy/streaming.go`):
+  - Detects aws-chunked via `Content-Encoding: aws-chunked` header (per AWS docs)
+  - Also detects via `x-amz-content-sha256` starting with `STREAMING-` (minio-go compatibility)
+  - Requires `x-amz-decoded-content-length` header for decoded payload size
+  - This dual detection ensures compatibility with minio-go and other clients that omit `Content-Encoding`
 
 ### Operations Implemented
 

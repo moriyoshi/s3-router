@@ -1628,6 +1628,187 @@ class TestRoundtrips:
         finally:
             os.unlink(tmp_path)
 
+    def test_roundtrip_minio_client_upload(self, s3router_with_moto: S3RouterWithMoto) -> None:
+        """Test roundtrip: upload using minio-py client which signals aws-chunked via x-amz-content-sha256.
+
+        The minio-py client doesn't always set Content-Encoding: aws-chunked, but instead
+        signals streaming via x-amz-content-sha256: STREAMING-AWS4-HMAC-SHA256-PAYLOAD.
+        This tests the workaround that detects aws-chunked via the x-amz-content-sha256 header.
+        """
+        from io import BytesIO
+
+        from minio import Minio
+
+        # Parse router URL
+        router_url = s3router_with_moto["router_url"]
+        moto_endpoint = s3router_with_moto["moto_endpoint"]
+
+        # Ensure bucket exists on moto
+        import boto3
+
+        moto_client = boto3.client(
+            "s3",
+            endpoint_url=moto_endpoint,
+            region_name="us-east-1",
+            aws_access_key_id="testing",
+            aws_secret_access_key="testing",
+        )
+        try:
+            moto_client.create_bucket(Bucket="test-bucket")
+        except Exception:
+            pass
+
+        # Create minio client pointing to router
+        # Remove http:// prefix for minio endpoint
+        endpoint = router_url.replace("http://", "").replace("https://", "")
+        minio_client = Minio(
+            endpoint,
+            access_key="testing",
+            secret_key="testing",
+            secure=False,
+            region="us-east-1",
+        )
+
+        # Create test data - minio uses streaming for any size
+        test_data = b"M" * (64 * 1024)  # 64KB
+
+        # Upload using minio client with known size (uses pre-calculated sha256)
+        minio_client.put_object(
+            "test-bucket",
+            "minio-test.bin",
+            BytesIO(test_data),
+            len(test_data),
+        )
+
+        # Verify using minio client
+        response = minio_client.get_object("test-bucket", "minio-test.bin")
+        stored_data = response.read()
+        response.close()
+        response.release_conn()
+
+        assert stored_data == test_data
+        assert len(stored_data) == len(test_data)
+
+    def test_roundtrip_minio_client_streaming_upload(self, s3router_with_moto: S3RouterWithMoto) -> None:
+        """Test roundtrip: upload using minio-py with unknown size to trigger streaming.
+
+        When size is unknown (-1), minio-py uses x-amz-content-sha256: STREAMING-AWS4-HMAC-SHA256-PAYLOAD
+        without the Content-Encoding: aws-chunked header. This tests the workaround that detects
+        aws-chunked via the x-amz-content-sha256 header.
+        """
+        from io import BytesIO
+
+        from minio import Minio
+
+        # Parse router URL
+        router_url = s3router_with_moto["router_url"]
+        moto_endpoint = s3router_with_moto["moto_endpoint"]
+
+        # Ensure bucket exists on moto
+        import boto3
+
+        moto_client = boto3.client(
+            "s3",
+            endpoint_url=moto_endpoint,
+            region_name="us-east-1",
+            aws_access_key_id="testing",
+            aws_secret_access_key="testing",
+        )
+        try:
+            moto_client.create_bucket(Bucket="test-bucket")
+        except Exception:
+            pass
+
+        # Create minio client pointing to router
+        endpoint = router_url.replace("http://", "").replace("https://", "")
+        minio_client = Minio(
+            endpoint,
+            access_key="testing",
+            secret_key="testing",
+            secure=False,
+            region="us-east-1",
+        )
+
+        # Create test data
+        test_data = b"S" * (64 * 1024)  # 64KB
+
+        # Upload with unknown size (-1) to force streaming aws-chunked encoding
+        # This causes minio to use x-amz-content-sha256: STREAMING-AWS4-HMAC-SHA256-PAYLOAD
+        minio_client.put_object(
+            "test-bucket",
+            "minio-streaming-test.bin",
+            BytesIO(test_data),
+            -1,  # Unknown size triggers streaming
+            part_size=10 * 1024 * 1024,  # 10MB part size
+        )
+
+        # Verify using minio client
+        response = minio_client.get_object("test-bucket", "minio-streaming-test.bin")
+        stored_data = response.read()
+        response.close()
+        response.release_conn()
+
+        assert stored_data == test_data
+        assert len(stored_data) == len(test_data)
+
+    def test_roundtrip_minio_client_fput(self, s3router_with_moto: S3RouterWithMoto) -> None:
+        """Test roundtrip: file upload using minio-py client fput_object.
+
+        This tests the streaming aws-chunked path with file-based uploads.
+        """
+        from minio import Minio
+
+        # Parse router URL
+        router_url = s3router_with_moto["router_url"]
+        moto_endpoint = s3router_with_moto["moto_endpoint"]
+
+        # Ensure bucket exists on moto
+        import boto3
+
+        moto_client = boto3.client(
+            "s3",
+            endpoint_url=moto_endpoint,
+            region_name="us-east-1",
+            aws_access_key_id="testing",
+            aws_secret_access_key="testing",
+        )
+        try:
+            moto_client.create_bucket(Bucket="test-bucket")
+        except Exception:
+            pass
+
+        # Create minio client pointing to router
+        endpoint = router_url.replace("http://", "").replace("https://", "")
+        minio_client = Minio(
+            endpoint,
+            access_key="testing",
+            secret_key="testing",
+            secure=False,
+            region="us-east-1",
+        )
+
+        # Create test data
+        test_data = b"F" * (128 * 1024)  # 128KB
+
+        with tempfile.NamedTemporaryFile(delete=False) as tmp:
+            tmp.write(test_data)
+            tmp_path = tmp.name
+
+        try:
+            # Upload file using minio client
+            minio_client.fput_object("test-bucket", "minio-fput-test.bin", tmp_path)
+
+            # Verify using minio client
+            response = minio_client.get_object("test-bucket", "minio-fput-test.bin")
+            stored_data = response.read()
+            response.close()
+            response.release_conn()
+
+            assert stored_data == test_data
+            assert len(stored_data) == len(test_data)
+        finally:
+            os.unlink(tmp_path)
+
 
 class TestListObjectsWithRewriteAndDelimiter:
     """Test ListObjects with non-slash delimiters combined with key rewriting.
