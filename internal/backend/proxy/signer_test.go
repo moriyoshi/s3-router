@@ -368,11 +368,51 @@ func TestIsStreamingEligible(t *testing.T) {
 			isCopy:   true,
 			expected: false,
 		},
+		{
+			name: "empty content-length string",
+			rc: &RequestContext{
+				Headers: http.Header{
+					"Content-Length": []string{""},
+				},
+			},
+			isCopy:   false,
+			expected: false,
+		},
+		{
+			name: "zero content-length",
+			rc: &RequestContext{
+				Headers: http.Header{
+					"Content-Length": []string{"0"},
+				},
+			},
+			isCopy:   false,
+			expected: true,
+		},
+		{
+			name: "large content-length",
+			rc: &RequestContext{
+				Headers: http.Header{
+					"Content-Length": []string{"1099511627776"}, // 1TB
+				},
+			},
+			expected: true,
+		},
+		{
+			name: "empty trailer value",
+			rc: &RequestContext{
+				Headers: http.Header{
+					"Content-Length": []string{"1000"},
+					"X-Amz-Trailer":  []string{""},
+				},
+			},
+			isCopy:   false,
+			expected: true, // Empty string means no trailer is actually present
+		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := IsStreamingEligible(tt.rc, tt.isCopy)
+			result := isStreamingEligible(tt.rc, tt.isCopy)
 			assert.Equal(t, tt.expected, result)
 		})
 	}

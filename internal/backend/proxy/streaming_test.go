@@ -141,62 +141,6 @@ func TestStreamingPutObjectHeaderForwarding(t *testing.T) {
 	_ = rc.Headers // Use variable to avoid lint error
 }
 
-func TestIsStreamingEligibleEdgeCases(t *testing.T) {
-	t.Parallel()
-	tests := []struct {
-		name     string
-		setup    func(*RequestContext)
-		expected bool
-	}{
-		{
-			name: "empty content-length string",
-			setup: func(rc *RequestContext) {
-				rc.Headers = http.Header{
-					"Content-Length": []string{""},
-				}
-			},
-			expected: false,
-		},
-		{
-			name: "zero content-length",
-			setup: func(rc *RequestContext) {
-				rc.Headers = http.Header{
-					"Content-Length": []string{"0"},
-				}
-			},
-			expected: true,
-		},
-		{
-			name: "large content-length",
-			setup: func(rc *RequestContext) {
-				rc.Headers = http.Header{
-					"Content-Length": []string{"1099511627776"}, // 1TB
-				}
-			},
-			expected: true,
-		},
-		{
-			name: "empty trailer value",
-			setup: func(rc *RequestContext) {
-				rc.Headers = http.Header{
-					"Content-Length": []string{"1000"},
-					"X-Amz-Trailer":  []string{""},
-				}
-			},
-			expected: true, // Empty string means no trailer is actually present
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			rc := &RequestContext{}
-			tt.setup(rc)
-			result := IsStreamingEligible(rc, false)
-			assert.Equal(t, tt.expected, result)
-		})
-	}
-}
-
 func TestCopyPutObjectHeadersEmpty(t *testing.T) {
 	t.Parallel()
 	rc := &RequestContext{
@@ -390,7 +334,7 @@ func TestIsAwsChunkedEligible(t *testing.T) {
 			rc := &RequestContext{
 				Headers: tt.headers,
 			}
-			result := IsAwsChunkedEligible(rc, tt.isCopyOperation)
+			result := isAwsChunkedEligible(rc, tt.isCopyOperation)
 			assert.Equal(t, tt.expected, result)
 		})
 	}
@@ -587,7 +531,7 @@ func TestStreamingAwsChunkedPutObjectWithCredsProvider(t *testing.T) {
 
 	// This should not panic with nil pointer dereference
 	// It will fail on endpoint resolution, but that's ok - we're testing credential retrieval
-	_, err := StreamingAwsChunkedPutObject(ctx, nil, bc, rc, decision)
+	_, err := streamingAwsChunkedPutObject(ctx, bc, rc, decision)
 	assert.Error(t, err) // Expected error due to missing endpoint resolver
 	// The important part is that we didn't panic on nil pointer dereference
 }
@@ -632,7 +576,7 @@ func TestStreamingAwsChunkedUploadPartWithCredsProvider(t *testing.T) {
 	}
 
 	// This should not panic with nil pointer dereference
-	_, err := StreamingAwsChunkedUploadPart(ctx, nil, bc, rc, decision, "upload-id", "1")
+	_, err := streamingAwsChunkedUploadPart(ctx, bc, rc, decision, "upload-id", "1")
 	assert.Error(t, err) // Expected error due to missing endpoint resolver
 	// The important part is that we didn't panic on nil pointer dereference
 }

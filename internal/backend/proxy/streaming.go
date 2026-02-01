@@ -25,16 +25,10 @@ const (
 	PayloadHashStreaming = "STREAMING-AWS4-HMAC-SHA256-PAYLOAD"
 )
 
-// StreamingPutObjectOptions configures streaming PUT behavior
-type StreamingPutObjectOptions struct {
-	PayloadHash string // x-amz-content-sha256 header value
-}
-
-// StreamingPutObject executes a PUT object request by streaming the body directly to the upstream S3.
+// streamingPutObject executes a PUT object request by streaming the body directly to the upstream S3.
 // This bypasses the AWS SDK to avoid body buffering.
-func StreamingPutObject(
+func streamingPutObject(
 	ctx context.Context,
-	req *http.Request,
 	bc *backend.BackendClient,
 	rc *RequestContext,
 	decision *routing.Decision,
@@ -65,7 +59,7 @@ func StreamingPutObject(
 	logger.Debug("endpoint resolved", "resolved_endpoint", resolvedEndpoint.URL.String())
 
 	// Create upstream request
-	upstreamReq, err := http.NewRequestWithContext(ctx, http.MethodPut, resolvedEndpoint.URL.String(), req.Body)
+	upstreamReq, err := http.NewRequestWithContext(ctx, http.MethodPut, resolvedEndpoint.URL.String(), rc.Request.Body)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create upstream request: %w", err)
 	}
@@ -99,10 +93,9 @@ func StreamingPutObject(
 	return resp, nil
 }
 
-// StreamingUploadPart executes an upload part request by streaming the body directly to the upstream S3.
-func StreamingUploadPart(
+// streamingUploadPart executes an upload part request by streaming the body directly to the upstream S3.
+func streamingUploadPart(
 	ctx context.Context,
-	req *http.Request,
 	bc *backend.BackendClient,
 	rc *RequestContext,
 	decision *routing.Decision,
@@ -138,7 +131,7 @@ func StreamingUploadPart(
 	logger.Debug("endpoint resolved", "resolved_endpoint", resolvedEndpoint.URL.String())
 
 	// Create upstream request
-	upstreamReq, err := http.NewRequestWithContext(ctx, http.MethodPut, resolvedEndpoint.URL.String(), req.Body)
+	upstreamReq, err := http.NewRequestWithContext(ctx, http.MethodPut, resolvedEndpoint.URL.String(), rc.Request.Body)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create upstream request: %w", err)
 	}
@@ -288,7 +281,7 @@ func peekS3ErrorResponseResponse(logger *slog.Logger, resp *http.Response) (*htt
 }
 
 // IsStreamingEligible determines if a request can use the streaming path.
-func IsStreamingEligible(rc *RequestContext, isCopyOperation bool) bool {
+func isStreamingEligible(rc *RequestContext, isCopyOperation bool) bool {
 	// Must have Content-Length (no chunked encoding)
 	if rc.Headers.Get("Content-Length") == "" {
 		return false
@@ -312,7 +305,7 @@ func IsStreamingEligible(rc *RequestContext, isCopyOperation bool) bool {
 //  1. Content-Encoding containing "aws-chunked", OR
 //  2. x-amz-content-sha256 being "STREAMING-AWS4-HMAC-SHA256-PAYLOAD" (or similar streaming values)
 //     with x-amz-decoded-content-length present
-func IsAwsChunkedEligible(rc *RequestContext, isCopyOperation bool) bool {
+func isAwsChunkedEligible(rc *RequestContext, isCopyOperation bool) bool {
 	// Check for aws-chunked via Content-Encoding header
 	contentEncoding := rc.Headers.Get("Content-Encoding")
 	hasAwsChunkedEncoding := IsAwsChunked(contentEncoding)
@@ -347,9 +340,8 @@ func IsAwsChunkedEligible(rc *RequestContext, isCopyOperation bool) bool {
 // StreamingAwsChunkedPutObject handles aws-chunked PUT requests by decoding the incoming
 // aws-chunked body and re-encoding it with backend credentials. This maintains true
 // streaming without buffering the entire body.
-func StreamingAwsChunkedPutObject(
+func streamingAwsChunkedPutObject(
 	ctx context.Context,
-	req *http.Request,
 	bc *backend.BackendClient,
 	rc *RequestContext,
 	decision *routing.Decision,
@@ -456,9 +448,8 @@ func StreamingAwsChunkedPutObject(
 }
 
 // StreamingAwsChunkedUploadPart handles aws-chunked UploadPart requests.
-func StreamingAwsChunkedUploadPart(
+func streamingAwsChunkedUploadPart(
 	ctx context.Context,
-	req *http.Request,
 	bc *backend.BackendClient,
 	rc *RequestContext,
 	decision *routing.Decision,

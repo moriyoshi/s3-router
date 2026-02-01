@@ -356,3 +356,9 @@ func OTelMiddleware(tracer trace.Tracer) func(http.Handler) http.Handler {
 		return otelhttp.NewHandler(next, "http", otelhttp.WithTracerProvider(otel.GetTracerProvider()))
 	}
 }
+
+// InstrumentHTTPTransport wraps an HTTP transport with OpenTelemetry instrumentation
+// to capture traces for outgoing HTTP requests
+func InstrumentHTTPTransport(transport http.RoundTripper) http.RoundTripper {
+	return otelhttp.NewTransport(transport, otelhttp.WithTracerProvider(otel.GetTracerProvider()))
+}

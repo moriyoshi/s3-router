@@ -515,23 +515,7 @@ func readRequestBody(r *http.Request) ([]byte, error) {
 }
 
 //nolint:gocyclo
-func (e *Executor) executePutObject(ctx context.Context, bc *backend.BackendClient, rc *RequestContext, decision *routing.Decision) (*http.Response, error) {
-	// Check if this is a copy operation
-	isCopyOperation := rc.Headers.Get("x-amz-copy-source") != ""
-	if isCopyOperation {
-		return e.executeCopyObject(ctx, bc, rc, decision, rc.Headers.Get("x-amz-copy-source"))
-	}
-
-	// Check if we can use aws-chunked streaming path (decode + re-encode with backend creds)
-	if IsAwsChunkedEligible(rc, isCopyOperation) {
-		return StreamingAwsChunkedPutObject(ctx, rc.Request, bc, rc, decision)
-	}
-
-	// Check if we can use regular streaming path
-	if IsStreamingEligible(rc, isCopyOperation) {
-		return StreamingPutObject(ctx, rc.Request, bc, rc, decision)
-	}
-
+func defaultPutObject(ctx context.Context, bc *backend.BackendClient, rc *RequestContext, decision *routing.Decision) (*http.Response, error) {
 	finalKey, err := conservativePathUnescape(bc.Prefix + decision.RewrittenKey)
 	if err != nil {
 		return nil, fmt.Errorf("malformed key: %w", err)
@@ -704,6 +688,26 @@ func (e *Executor) executePutObject(ctx context.Context, bc *backend.BackendClie
 	}
 
 	return resp, nil
+}
+
+func (e *Executor) executePutObject(ctx context.Context, bc *backend.BackendClient, rc *RequestContext, decision *routing.Decision) (*http.Response, error) {
+	// Check if this is a copy operation
+	isCopyOperation := rc.Headers.Get("x-amz-copy-source") != ""
+	if isCopyOperation {
+		return e.executeCopyObject(ctx, bc, rc, decision, rc.Headers.Get("x-amz-copy-source"))
+	}
+
+	// Check if we can use aws-chunked streaming path (decode + re-encode with backend creds)
+	if isAwsChunkedEligible(rc, isCopyOperation) {
+		return streamingAwsChunkedPutObject(ctx, bc, rc, decision)
+	}
+
+	// Check if we can use regular streaming path
+	if isStreamingEligible(rc, isCopyOperation) {
+		return streamingPutObject(ctx, bc, rc, decision)
+	}
+
+	return defaultPutObject(ctx, bc, rc, decision)
 }
 
 func (e *Executor) executeDeleteObject(ctx context.Context, bc *backend.BackendClient, rc *RequestContext, decision *routing.Decision) (*http.Response, error) {
@@ -953,13 +957,13 @@ func (e *Executor) executeUploadPart(ctx context.Context, bc *backend.BackendCli
 	}
 
 	// Check if we can use aws-chunked streaming path (decode + re-encode with backend creds)
-	if IsAwsChunkedEligible(rc, false) {
-		return StreamingAwsChunkedUploadPart(ctx, rc.Request, bc, rc, decision, uploadID, partNumber)
+	if isAwsChunkedEligible(rc, false) {
+		return streamingAwsChunkedUploadPart(ctx, bc, rc, decision, uploadID, partNumber)
 	}
 
 	// Check if we can use regular streaming path
-	if IsStreamingEligible(rc, false) {
-		return StreamingUploadPart(ctx, rc.Request, bc, rc, decision, uploadID, partNumber)
+	if isStreamingEligible(rc, false) {
+		return streamingUploadPart(ctx, bc, rc, decision, uploadID, partNumber)
 	}
 
 	// Fallback to buffered path using AWS SDK
