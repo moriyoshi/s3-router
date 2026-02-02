@@ -550,6 +550,61 @@ func extractSignaturesFromAwsChunked(encoded []byte) []string {
 	return sigs
 }
 
+// extractDataChunksFromAwsChunked extracts the data chunks (excluding final empty chunk)
+func extractDataChunksFromAwsChunked(encoded []byte) [][]byte {
+	var chunks [][]byte
+	reader := bytes.NewReader(encoded)
+
+	for {
+		var headerLine bytes.Buffer
+		for {
+			b, err := reader.ReadByte()
+			if err != nil {
+				return chunks
+			}
+			if b == '\r' {
+				next, _ := reader.ReadByte()
+				if next == '\n' {
+					break
+				}
+				headerLine.WriteByte(b)
+				headerLine.WriteByte(next)
+			} else {
+				headerLine.WriteByte(b)
+			}
+		}
+
+		header := headerLine.String()
+
+		// Parse size
+		semiIdx := strings.Index(header, ";")
+		if semiIdx == -1 {
+			return chunks
+		}
+		hexSize := header[:semiIdx]
+		sizeBytes, _ := hex.DecodeString(padHex(hexSize))
+		size := int64(0)
+		for _, b := range sizeBytes {
+			size = (size << 8) | int64(b)
+		}
+
+		if size == 0 {
+			break
+		}
+
+		// Read chunk data
+		chunkData := make([]byte, size)
+		io.ReadFull(reader, chunkData)
+		chunks = append(chunks, chunkData)
+
+		// Skip trailing \r\n
+		reader.ReadByte()
+		reader.ReadByte()
+	}
+
+	return chunks
+}
+
 func TestHmacSHA256Bytes(t *testing.T) {
 	t.Parallel()
 

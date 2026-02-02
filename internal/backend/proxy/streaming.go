@@ -12,7 +12,6 @@ import (
 	"strings"
 
 	"github.com/moriyoshi/s3-router/internal/backend"
-	"github.com/moriyoshi/s3-router/internal/backend/cred"
 	"github.com/moriyoshi/s3-router/internal/observability"
 	"github.com/moriyoshi/s3-router/internal/routing"
 )
@@ -348,44 +347,12 @@ func streamingAwsChunkedPutObject(
 ) (*http.Response, error) {
 	logger := observability.GetLoggerFromContext(ctx)
 
-	// Extract seed signature from client request
-	authHeader := rc.Headers.Get("Authorization")
-	seedSignature := ExtractSeedSignature(authHeader)
-	if seedSignature == "" {
-		return nil, fmt.Errorf("missing seed signature in Authorization header")
-	}
-
 	// Get decoded content length
 	decodedContentLength := rc.Headers.Get("x-amz-decoded-content-length")
 	decodedLen, err := strconv.ParseInt(decodedContentLength, 10, 64)
 	if err != nil {
 		return nil, fmt.Errorf("invalid x-amz-decoded-content-length: %w", err)
 	}
-
-	// Get current timestamp for signing
-	amzDate := rc.Headers.Get("x-amz-date")
-	if amzDate == "" || len(amzDate) < 8 {
-		return nil, fmt.Errorf("invalid x-amz-date header: must be at least 8 characters")
-	}
-
-	// Get credentials from the backend client
-	creds, err := cred.ToAWSCredentialsProvider(bc.CredsProvider).Retrieve(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("failed to retrieve credentials: %w", err)
-	}
-
-	// Derive signing key for backend credentials
-	dateStamp := amzDate[:8]
-	signingKey := DeriveSigningKey(creds.SecretAccessKey, dateStamp, bc.Region, "s3")
-
-	// Create re-encoder
-	reEncoder := NewAwsChunkedReEncoder(
-		rc.Body,
-		signingKey,
-		amzDate,
-		bc.Region,
-		seedSignature,
-	)
 
 	// Calculate the re-encoded content length
 	reEncodedContentLength := CalculateReEncodedContentLength(decodedLen, 64*1024)
@@ -406,8 +373,8 @@ func streamingAwsChunkedPutObject(
 		return nil, fmt.Errorf("failed to resolve endpoint: %w", err)
 	}
 
-	// Create upstream request
-	upstreamReq, err := http.NewRequestWithContext(ctx, http.MethodPut, resolvedEndpoint.URL.String(), reEncoder)
+	// Create upstream request without body first (we'll set it after signing)
+	upstreamReq, err := http.NewRequestWithContext(ctx, http.MethodPut, resolvedEndpoint.URL.String(), nil)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create upstream request: %w", err)
 	}
@@ -417,7 +384,7 @@ func streamingAwsChunkedPutObject(
 		upstreamReq.Header[k] = v
 	}
 
-	// Set required headers
+	// Set required headers before signing
 	upstreamReq.Header.Set("Content-Encoding", "aws-chunked")
 	upstreamReq.Header.Set("x-amz-decoded-content-length", decodedContentLength)
 	upstreamReq.Header.Set("Content-Length", strconv.FormatInt(reEncodedContentLength, 10))
@@ -426,9 +393,51 @@ func streamingAwsChunkedPutObject(
 	// Copy through relevant headers
 	copyAwsChunkedHeaders(upstreamReq, rc)
 
-	// Sign the request with streaming payload hash
-	if err := SignStreamingRequest(ctx, upstreamReq, bc, PayloadHashStreaming); err != nil {
+	// Sign the request and get the credentials used (we need the same credentials for chunk re-encoding)
+	creds, err := SignStreamingRequestWithCredentials(ctx, upstreamReq, bc, PayloadHashStreaming)
+	if err != nil {
 		return nil, fmt.Errorf("failed to sign request: %w", err)
+	}
+
+	// Extract the seed signature from the backend's Authorization header
+	// This is the signature that was computed for the upstream request
+	backendAuthHeader := upstreamReq.Header.Get("Authorization")
+	seedSignature := ExtractSeedSignature(backendAuthHeader)
+	if seedSignature == "" {
+		return nil, fmt.Errorf("failed to extract seed signature from backend Authorization header")
+	}
+
+	// Get the x-amz-date that was used for signing (may have been set by the signer)
+	amzDate := upstreamReq.Header.Get("x-amz-date")
+	if amzDate == "" || len(amzDate) < 8 {
+		return nil, fmt.Errorf("invalid x-amz-date header after signing: must be at least 8 characters")
+	}
+
+	// Derive signing key for backend credentials using the same timestamp as the request signature
+	// IMPORTANT: We use the credentials returned from SignStreamingRequestWithCredentials to ensure
+	// the same credentials are used for both request signing and chunk re-encoding.
+	dateStamp := amzDate[:8]
+	signingKey := DeriveSigningKey(creds.SecretAccessKey, dateStamp, bc.Region, "s3")
+
+	logger.Debug("derived signing key for chunks",
+		"access_key", creds.AccessKeyID,
+		"date_stamp", dateStamp,
+		"region", bc.Region,
+	)
+
+	// Create re-encoder with the backend seed signature
+	reEncoder := NewAwsChunkedReEncoder(
+		rc.Body,
+		signingKey,
+		amzDate,
+		bc.Region,
+		seedSignature,
+	)
+
+	// Set the request body to the re-encoder
+	upstreamReq.Body = io.NopCloser(reEncoder)
+	upstreamReq.GetBody = func() (io.ReadCloser, error) {
+		return nil, fmt.Errorf("streaming body cannot be replayed")
 	}
 
 	logger.Debug("streaming aws-chunked PUT",
@@ -436,6 +445,9 @@ func streamingAwsChunkedPutObject(
 		"key", finalKey,
 		"decoded_length", decodedLen,
 		"encoded_length", reEncodedContentLength,
+		"seed_signature", seedSignature,
+		"amz_date", amzDate,
+		"backend_auth_header", backendAuthHeader,
 	)
 
 	// Execute request
@@ -458,44 +470,12 @@ func streamingAwsChunkedUploadPart(
 ) (*http.Response, error) {
 	logger := observability.GetLoggerFromContext(ctx)
 
-	// Extract seed signature from client request
-	authHeader := rc.Headers.Get("Authorization")
-	seedSignature := ExtractSeedSignature(authHeader)
-	if seedSignature == "" {
-		return nil, fmt.Errorf("missing seed signature in Authorization header")
-	}
-
 	// Get decoded content length
 	decodedContentLength := rc.Headers.Get("x-amz-decoded-content-length")
 	decodedLen, err := strconv.ParseInt(decodedContentLength, 10, 64)
 	if err != nil {
 		return nil, fmt.Errorf("invalid x-amz-decoded-content-length: %w", err)
 	}
-
-	// Get current timestamp for signing
-	amzDate := rc.Headers.Get("x-amz-date")
-	if amzDate == "" || len(amzDate) < 8 {
-		return nil, fmt.Errorf("invalid x-amz-date header: must be at least 8 characters")
-	}
-
-	// Get credentials from the backend client
-	creds, err := cred.ToAWSCredentialsProvider(bc.CredsProvider).Retrieve(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("failed to retrieve credentials: %w", err)
-	}
-
-	// Derive signing key for backend credentials
-	dateStamp := amzDate[:8]
-	signingKey := DeriveSigningKey(creds.SecretAccessKey, dateStamp, bc.Region, "s3")
-
-	// Create re-encoder
-	reEncoder := NewAwsChunkedReEncoder(
-		rc.Body,
-		signingKey,
-		amzDate,
-		bc.Region,
-		seedSignature,
-	)
 
 	// Calculate the re-encoded content length
 	reEncodedContentLength := CalculateReEncodedContentLength(decodedLen, 64*1024)
@@ -519,8 +499,8 @@ func streamingAwsChunkedUploadPart(
 	// Add query parameters for UploadPart
 	resolvedEndpoint.URL.RawQuery = fmt.Sprintf("uploadId=%s&partNumber=%s", url.QueryEscape(uploadID), partNumber)
 
-	// Create upstream request
-	upstreamReq, err := http.NewRequestWithContext(ctx, http.MethodPut, resolvedEndpoint.URL.String(), reEncoder)
+	// Create upstream request without body first (we'll set it after signing)
+	upstreamReq, err := http.NewRequestWithContext(ctx, http.MethodPut, resolvedEndpoint.URL.String(), nil)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create upstream request: %w", err)
 	}
@@ -530,15 +510,50 @@ func streamingAwsChunkedUploadPart(
 		upstreamReq.Header[k] = v
 	}
 
-	// Set required headers
+	// Set required headers before signing
 	upstreamReq.Header.Set("Content-Encoding", "aws-chunked")
 	upstreamReq.Header.Set("x-amz-decoded-content-length", decodedContentLength)
 	upstreamReq.Header.Set("Content-Length", strconv.FormatInt(reEncodedContentLength, 10))
 	upstreamReq.ContentLength = reEncodedContentLength
 
-	// Sign the request with streaming payload hash
-	if err := SignStreamingRequest(ctx, upstreamReq, bc, PayloadHashStreaming); err != nil {
+	// Sign the request and get the credentials used (we need the same credentials for chunk re-encoding)
+	creds, err := SignStreamingRequestWithCredentials(ctx, upstreamReq, bc, PayloadHashStreaming)
+	if err != nil {
 		return nil, fmt.Errorf("failed to sign request: %w", err)
+	}
+
+	// Extract the seed signature from the backend's Authorization header
+	backendAuthHeader := upstreamReq.Header.Get("Authorization")
+	seedSignature := ExtractSeedSignature(backendAuthHeader)
+	if seedSignature == "" {
+		return nil, fmt.Errorf("failed to extract seed signature from backend Authorization header")
+	}
+
+	// Get the x-amz-date that was used for signing (may have been set by the signer)
+	amzDate := upstreamReq.Header.Get("x-amz-date")
+	if amzDate == "" || len(amzDate) < 8 {
+		return nil, fmt.Errorf("invalid x-amz-date header after signing: must be at least 8 characters")
+	}
+
+	// Derive signing key for backend credentials using the same timestamp as the request signature
+	// IMPORTANT: We use the credentials returned from SignStreamingRequestWithCredentials to ensure
+	// the same credentials are used for both request signing and chunk re-encoding.
+	dateStamp := amzDate[:8]
+	signingKey := DeriveSigningKey(creds.SecretAccessKey, dateStamp, bc.Region, "s3")
+
+	// Create re-encoder with the backend seed signature
+	reEncoder := NewAwsChunkedReEncoder(
+		rc.Body,
+		signingKey,
+		amzDate,
+		bc.Region,
+		seedSignature,
+	)
+
+	// Set the request body to the re-encoder
+	upstreamReq.Body = io.NopCloser(reEncoder)
+	upstreamReq.GetBody = func() (io.ReadCloser, error) {
+		return nil, fmt.Errorf("streaming body cannot be replayed")
 	}
 
 	logger.Debug("streaming aws-chunked UploadPart",

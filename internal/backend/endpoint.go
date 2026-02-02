@@ -223,3 +223,11 @@ func newEndpointResolver(bcfg *config.BackendConfig) (*EndpointResolver, error) 
 		awsResolver: awsResolver,
 	}, nil
 }
+
+// NewEndpointResolverFromTemplate creates an EndpointResolver from a parsed template.
+// This is intended for testing purposes.
+func NewEndpointResolverFromTemplate(tmpl *template.Template) *EndpointResolver {
+	return &EndpointResolver{
+		template: tmpl,
+	}
+}

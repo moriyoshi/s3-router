@@ -1809,6 +1809,74 @@ class TestRoundtrips:
         finally:
             os.unlink(tmp_path)
 
+    def test_roundtrip_minio_client_streaming_multipart(self, s3router_with_moto: S3RouterWithMoto) -> None:
+        """Test roundtrip: multipart upload using minio-py with streaming aws-chunked encoding.
+
+        This test specifically exercises the aws-chunked UploadPart code path where
+        chunk signatures must be computed using the backend's seed signature (from the
+        backend Authorization header) rather than the client's seed signature.
+
+        The fix ensures that when s3-router re-signs chunks for the backend,
+        it uses the correct signature chain starting from the backend request's
+        seed signature.
+        """
+        from io import BytesIO
+
+        from minio import Minio
+
+        # Parse router URL
+        router_url = s3router_with_moto["router_url"]
+        moto_endpoint = s3router_with_moto["moto_endpoint"]
+
+        # Ensure bucket exists on moto
+        import boto3
+
+        moto_client = boto3.client(
+            "s3",
+            endpoint_url=moto_endpoint,
+            region_name="us-east-1",
+            aws_access_key_id="testing",
+            aws_secret_access_key="testing",
+        )
+        try:
+            moto_client.create_bucket(Bucket="test-bucket")
+        except Exception:
+            pass
+
+        # Create minio client pointing to router
+        endpoint = router_url.replace("http://", "").replace("https://", "")
+        minio_client = Minio(
+            endpoint,
+            access_key="testing",
+            secret_key="testing",
+            secure=False,
+            region="us-east-1",
+        )
+
+        # Create test data larger than the default minio part size (5MB)
+        # to force multipart upload with streaming aws-chunked parts
+        part_size = 5 * 1024 * 1024  # 5MB per part (minio minimum)
+        test_data = b"P" * (part_size + 1024)  # Just over 5MB to trigger multipart
+
+        # Upload using minio client with unknown size
+        # This triggers STREAMING-AWS4-HMAC-SHA256-PAYLOAD for each part
+        minio_client.put_object(
+            "test-bucket",
+            "minio-multipart-streaming.bin",
+            BytesIO(test_data),
+            -1,  # Unknown size triggers streaming multipart
+            part_size=part_size,
+        )
+
+        # Verify the upload by reading it back
+        response = minio_client.get_object("test-bucket", "minio-multipart-streaming.bin")
+        stored_data = response.read()
+        response.close()
+        response.release_conn()
+
+        assert stored_data == test_data
+        assert len(stored_data) == len(test_data)
+
 
 class TestListObjectsWithRewriteAndDelimiter:
     """Test ListObjects with non-slash delimiters combined with key rewriting.

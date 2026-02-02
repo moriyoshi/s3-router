@@ -254,24 +254,32 @@ func (r *AwsChunkedReEncoder) writeFinalChunk() error {
 //	<credential-scope>\n
 //	<previous-signature>\n
 //	<chunk-payload-hash>
+//
+// emptyStringHash is the SHA256 hash of an empty string, used in AWS SigV4 streaming signature.
+const emptyStringHash = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+
 func (r *AwsChunkedReEncoder) signChunk(data []byte) string {
 	// Hash the chunk data
 	hash := sha256.Sum256(data)
 	chunkHash := hex.EncodeToString(hash[:])
 
-	// Build string to sign
+	// Build string to sign per AWS docs:
+	// https://docs.aws.amazon.com/AmazonS3/latest/API/sigv4-streaming.html
+	// Format: algorithm + "\n" + date + "\n" + scope + "\n" + prevSig + "\n" + emptyHash + "\n" + chunkHash
 	stringToSign := fmt.Sprintf(
-		"AWS4-HMAC-SHA256-PAYLOAD\n%s\n%s\n%s\n%s",
+		"AWS4-HMAC-SHA256-PAYLOAD\n%s\n%s\n%s\n%s\n%s",
 		r.amzDate,
 		r.credentialScope,
 		r.prevSig,
+		emptyStringHash,
 		chunkHash,
 	)
 
 	// Sign with the signing key
 	mac := hmac.New(sha256.New, r.signingKey)
 	mac.Write([]byte(stringToSign))
-	return hex.EncodeToString(mac.Sum(nil))
+	sig := hex.EncodeToString(mac.Sum(nil))
+	return sig
 }
 
 // deriveSigningKeyForChunk derives the signing key for AWS SigV4.

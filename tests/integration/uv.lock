@@ -1872,6 +1872,7 @@ dependencies = [
 
 [package.dev-dependencies]
 dev = [
+    { name = "minio" },
     { name = "mypy" },
     { name = "ruff" },
     { name = "types-boto3", extra = ["s3"] },
@@ -1894,6 +1895,7 @@ requires-dist = [
 
 [package.metadata.requires-dev]
 dev = [
+    { name = "minio", specifier = ">=7.2.20" },
     { name = "mypy", specifier = ">=1.19.0" },
     { name = "ruff", specifier = ">=0.14.0" },
     { name = "types-boto3", extras = ["s3"], specifier = ">=1.42.0" },

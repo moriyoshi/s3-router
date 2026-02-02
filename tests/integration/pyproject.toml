@@ -17,6 +17,7 @@ dependencies = [
 
 [dependency-groups]
 dev = [
+    "minio>=7.2.20",
     "mypy>=1.19.0",
     "ruff>=0.14.0",
     "types-boto3[s3]>=1.42.0",

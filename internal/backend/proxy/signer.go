@@ -263,6 +263,22 @@ func SignStreamingRequest(ctx context.Context, req *http.Request, bc *backend.Ba
 	return signer.SignRequest(req, payloadHash)
 }
 
+// SignStreamingRequestWithCredentials signs a request and returns the credentials used.
+// This is needed for streaming uploads where we need the same credentials for both
+// request signing and chunk re-encoding.
+func SignStreamingRequestWithCredentials(ctx context.Context, req *http.Request, bc *backend.BackendClient, payloadHash string) (aws.Credentials, error) {
+	// Get credentials from the backend client
+	creds, err := cred.ToAWSCredentialsProvider(bc.CredsProvider).Retrieve(ctx)
+	if err != nil {
+		return aws.Credentials{}, fmt.Errorf("failed to retrieve credentials: %w", err)
+	}
+	signer := NewS3Signer(creds, bc.Region)
+	if err := signer.SignRequest(req, payloadHash); err != nil {
+		return aws.Credentials{}, err
+	}
+	return creds, nil
+}
+
 // Helper functions
 
 func hmacSHA256(key []byte, data string) []byte {
