@@ -2,7 +2,6 @@ package backend
 
 import (
 	"context"
-	"net/http"
 	"testing"
 	"time"
 
@@ -261,9 +260,8 @@ func TestManager_HTTPClient_Configuration(t *testing.T) {
 	assert.NotNil(t, client.HTTPClient)
 	assert.Equal(t, timeout, client.HTTPClient.Timeout)
 
-	transport, ok := client.HTTPClient.Transport.(*http.Transport)
-	assert.True(t, ok, "expected http.Transport")
-	assert.NotZero(t, transport.MaxIdleConns)
+	// Transport is wrapped with otelhttp instrumentation, but should still be a valid RoundTripper
+	assert.NotNil(t, client.HTTPClient.Transport)
 }
 
 func TestManager_Close(t *testing.T) {

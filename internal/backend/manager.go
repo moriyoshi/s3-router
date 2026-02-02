@@ -16,6 +16,7 @@ import (
 
 	"github.com/moriyoshi/s3-router/internal/backend/cred"
 	"github.com/moriyoshi/s3-router/internal/config"
+	"github.com/moriyoshi/s3-router/internal/observability"
 )
 
 type HealthState struct {
@@ -130,8 +131,11 @@ func (m *Manager) createBackendClient(id string, bcfg *config.BackendConfig) (*B
 		DialContext:         (&net.Dialer{Timeout: 30 * time.Second}).DialContext,
 	}
 
+	// Wrap transport with OpenTelemetry instrumentation
+	instrumentedTransport := observability.InstrumentHTTPTransport(transport)
+
 	httpClient := &http.Client{
-		Transport: transport,
+		Transport: instrumentedTransport,
 		Timeout:   m.timeout,
 	}
 
@@ -152,7 +156,7 @@ func (m *Manager) createBackendClient(id string, bcfg *config.BackendConfig) (*B
 	var clientOptions []func(*s3.Options)
 	clientOptions = append(clientOptions, func(o *s3.Options) {
 		o.HTTPClient = &http.Client{
-			Transport: transport,
+			Transport: instrumentedTransport,
 			Timeout:   bcfg.Timeout,
 		}
 	})
