@@ -8,7 +8,7 @@
 * [./.agent/docs/IMPLEMENTATION.md](./.agent/docs/IMPLEMENTATION.md) ... implementation notes and workplan.
 * [./.agent/docs/PEER_REVIEW.md](./.agent/docs/PEER_REVIEW.md) ... peer code review history.
 
-# Practices
+# Rules
 
 * When you'd make summary documents for your work, be sure to write them under `./.agent/docs`, not under `/tmp`.
 * Try to write your work summary to one of the existing documents.
