@@ -69,6 +69,7 @@ config:
       prefix: staging/
 
   # Routing rules
+  # Supports two formats: list (shown below) or map (see commented example)
   buckets:
     - name: my-s3-virtual-bucket
       routes:
@@ -96,6 +97,28 @@ config:
           rewrite:
             - pattern: ^archive/([0-9]{4})/(.*)
               result: archives/$1/$2
+
+  # Map format example (alternative to list format above):
+  # buckets:
+  #   my-s3-virtual-bucket:
+  #     routes:
+  #       - path: ^prod/(?P<rest>.*)
+  #         backend: aws-us-east
+  #         rewrite:
+  #           - result: production/$rest
+  #       - path: ^eu/(?P<rest>.*)
+  #         backend: aws-eu-west
+  #         rewrite:
+  #           - result: european/$rest
+  #       - path: ^staging/(?P<rest>.*)
+  #         backend: minio-local
+  #         rewrite:
+  #           - result: $rest
+  #       - path: ^archive/.*
+  #         backend: aws-us-east
+  #         rewrite:
+  #           - pattern: ^archive/([0-9]{4})/(.*)
+  #             result: archives/$1/$2
 
 # Credentials to be stored in Kubernetes Secret
 # These are injected from values and securely stored

@@ -45,7 +45,7 @@ backends:        # map keyed by backend id
         session_name: s3-router                # optional; defaults to "s3-router"
         duration: 3600                         # optional; duration in seconds (default: 3600)
 
-buckets:         # ordered list evaluated per virtual bucket
+buckets:         # supports both list and map formats (see examples below)
   - name: foo                               # virtual bucket exposed to clients
     routes:                                 # first route that matches wins
       - path: ^foo/(?P<rest>.*)             # required RE2 regex applied to the object key
@@ -78,6 +78,38 @@ features:                                  # optional boolean map (currently unu
 
 credentials_store: credentials.json         # optional; path to JSON file with static credentials
 ```
+
+#### Bucket Configuration Formats
+
+s3-router supports two formats for bucket configuration: **list format** (preserves order) and **map format** (more concise). Both formats are functionally equivalent and can be used interchangeably.
+
+**List Format** (useful when order matters or for sequential bucket evaluation):
+```yaml
+buckets:
+  - name: bucket1
+    routes:
+      - path: ^data/(.*)
+        backend: backend1
+  - name: bucket2
+    routes:
+      - path: ^uploads/(.*)
+        backend: backend2
+```
+
+**Map Format** (recommended for readability; bucket name is the key):
+```yaml
+buckets:
+  bucket1:
+    routes:
+      - path: ^data/(.*)
+        backend: backend1
+  bucket2:
+    routes:
+      - path: ^uploads/(.*)
+        backend: backend2
+```
+
+Both produce identical behavior. The map format is recommended for new configurations as it eliminates redundancy (bucket name appears once as the key).
 
 #### Backends
 

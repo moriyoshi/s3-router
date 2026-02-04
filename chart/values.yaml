@@ -141,7 +141,7 @@ config:
   # Routing rules
   buckets:
     []
-    # Example routing rules:
+    # Example routing rules - List format:
     # - name: my-virtual-bucket
     #   routes:
     #     - path: ^foo/(?P<rest>.*)
@@ -155,6 +155,25 @@ config:
     #           result: SPECIAL/$1
     #         - pattern: ^bar/(?P<patternInRewriter>.*)
     #           result: $patternInRewriter
+    #
+    # Example routing rules - Map format (alternative):
+    # my-virtual-bucket:
+    #   routes:
+    #     - path: ^foo/(?P<rest>.*)
+    #       backend: backend1
+    #       rewrite:
+    #         - result: $rest
+    #     - path: ^bar/.*
+    #       backend: backend2
+    #       rewrite:
+    #         - pattern: ^bar/special/(.*)
+    #           result: SPECIAL/$1
+    #         - pattern: ^bar/(?P<patternInRewriter>.*)
+    #           result: $patternInRewriter
+    # another-virtual-bucket:
+    #   routes:
+    #     - path: ^other/(.*)
+    #       backend: backend1
 
 # Client authentication credentials (credentials_store)
 # These are credentials for clients connecting TO s3-router (not backend credentials)

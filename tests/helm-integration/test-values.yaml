@@ -62,27 +62,27 @@ config:
         secret_access_key: test
 
 
-  # Test routing rules
+  # Test routing rules (using new map format)
   buckets:
-    - name: test-bucket
+    test-bucket:
       routes:
         - path: ^(.*)
           backend: moto-backend
           rewrite:
             - result: $1
-    - name: backend-prod
+    backend-prod:
       routes:
         - path: ^(.*)
           backend: moto-backend-prod
           rewrite:
             - result: $1
-    - name: backend-staging
+    backend-staging:
       routes:
         - path: ^(.*)
           backend: moto-backend-staging
           rewrite:
             - result: $1
-    - name: backend-archive
+    backend-archive:
       routes:
         - path: ^(.*)
           backend: moto-backend-archive

@@ -251,7 +251,8 @@ buckets:
 	err = cfg.PopulateFromFile(tmpFile)
 	require.NoError(t, err)
 
-	routes := cfg.Buckets[0].Routes
+	require.Contains(t, cfg.Buckets, "bucket1")
+	routes := cfg.Buckets["bucket1"].Routes
 	assert.Len(t, routes[0].Rewrites, 2)
 	assert.Equal(t, "^/api/v1/(.*)$", routes[0].Rewrites[0].Pattern)
 	assert.Equal(t, "/v1/$1", routes[0].Rewrites[0].Result)
@@ -339,8 +340,10 @@ features:
 
 	// Verify buckets
 	assert.Len(t, cfg.Buckets, 2)
-	assert.Equal(t, "primary", cfg.Buckets[0].Name)
-	assert.Equal(t, "secondary", cfg.Buckets[1].Name)
+	assert.Contains(t, cfg.Buckets, "primary")
+	assert.Contains(t, cfg.Buckets, "secondary")
+	assert.Equal(t, "primary", cfg.Buckets["primary"].Name)
+	assert.Equal(t, "secondary", cfg.Buckets["secondary"].Name)
 
 	// Verify server config
 	assert.NotNil(t, cfg.Server)
@@ -353,4 +356,112 @@ features:
 	// Verify features
 	assert.True(t, cfg.Features["enable_logging"])
 	assert.False(t, cfg.Features["enable_metrics"])
+}
+
+func TestPopulateFromFileBucketsListFormat(t *testing.T) {
+	t.Parallel()
+	content := `
+backends:
+  backend1:
+    bucket: my-bucket-1
+    credentials:
+      type: file
+      path: /etc/s3router/creds.json
+buckets:
+  - name: virtual-bucket-1
+    routes:
+      - path: ^test/(.*)
+        backend: backend1
+        rewrite:
+          - result: test/$1
+  - name: virtual-bucket-2
+    routes:
+      - path: ^data/(.*)
+        backend: backend1
+        rewrite:
+          - result: data/$1
+`
+	tmpFile := filepath.Join(t.TempDir(), "config.yaml")
+	err := os.WriteFile(tmpFile, []byte(content), 0644)
+	require.NoError(t, err)
+
+	cfg := Config{}
+	err = cfg.PopulateFromFile(tmpFile)
+	require.NoError(t, err)
+
+	assert.Len(t, cfg.Buckets, 2)
+	assert.Contains(t, cfg.Buckets, "virtual-bucket-1")
+	assert.Contains(t, cfg.Buckets, "virtual-bucket-2")
+	assert.Equal(t, "virtual-bucket-1", cfg.Buckets["virtual-bucket-1"].Name)
+	assert.Equal(t, "virtual-bucket-2", cfg.Buckets["virtual-bucket-2"].Name)
+}
+
+func TestPopulateFromFileBucketsMapFormat(t *testing.T) {
+	t.Parallel()
+	content := `
+backends:
+  backend1:
+    bucket: my-bucket-1
+    credentials:
+      type: file
+      path: /etc/s3router/creds.json
+buckets:
+  virtual-bucket-1:
+    routes:
+      - path: ^test/(.*)
+        backend: backend1
+        rewrite:
+          - result: test/$1
+  virtual-bucket-2:
+    routes:
+      - path: ^data/(.*)
+        backend: backend1
+        rewrite:
+          - result: data/$1
+`
+	tmpFile := filepath.Join(t.TempDir(), "config.yaml")
+	err := os.WriteFile(tmpFile, []byte(content), 0644)
+	require.NoError(t, err)
+
+	cfg := Config{}
+	err = cfg.PopulateFromFile(tmpFile)
+	require.NoError(t, err)
+
+	assert.Len(t, cfg.Buckets, 2)
+	// Map format may not preserve order, so check by name
+	bucketNames := make(map[string]bool)
+	for _, bucket := range cfg.Buckets {
+		bucketNames[bucket.Name] = true
+	}
+	assert.True(t, bucketNames["virtual-bucket-1"])
+	assert.True(t, bucketNames["virtual-bucket-2"])
+}
+
+func TestPopulateFromFileBucketsDuplicateInListFormat(t *testing.T) {
+	t.Parallel()
+	content := `
+backends:
+  backend1:
+    bucket: my-bucket-1
+    credentials:
+      type: file
+      path: /etc/s3router/creds.json
+buckets:
+  - name: virtual-bucket-1
+    routes:
+      - path: ^test/(.*)
+        backend: backend1
+  - name: virtual-bucket-1
+    routes:
+      - path: ^data/(.*)
+        backend: backend1
+`
+	tmpFile := filepath.Join(t.TempDir(), "config.yaml")
+	err := os.WriteFile(tmpFile, []byte(content), 0644)
+	require.NoError(t, err)
+
+	cfg := Config{}
+	err = cfg.PopulateFromFile(tmpFile)
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "duplicate")
 }

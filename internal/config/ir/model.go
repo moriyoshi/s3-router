@@ -2,7 +2,7 @@ package ir
 
 type Config struct {
 	Backends         map[string]BackendConfig `mapstructure:"backends"`
-	Buckets          []BucketConfig           `mapstructure:"buckets"`
+	Buckets          map[string]BucketConfig  `mapstructure:"buckets"`
 	Features         map[string]bool          `mapstructure:"features,omitempty"`
 	CredentialsStore string                   `mapstructure:"credentials_store,omitempty"`
 	Server           *ServerConfig            `mapstructure:"server,omitempty"`

@@ -24,8 +24,8 @@ func TestConfig_PopulateFromIR(t *testing.T) {
 						Bucket: "my-bucket",
 					},
 				},
-				Buckets: []ir.BucketConfig{
-					{
+				Buckets: map[string]ir.BucketConfig{
+					"my-virtual-bucket": {
 						Name: "my-virtual-bucket",
 						Routes: []ir.RouteConfig{
 							{
@@ -42,7 +42,7 @@ func TestConfig_PopulateFromIR(t *testing.T) {
 			name: "no backends",
 			config: ir.Config{
 				Backends: map[string]ir.BackendConfig{},
-				Buckets:  []ir.BucketConfig{},
+				Buckets:  map[string]ir.BucketConfig{},
 			},
 			expectErr: true,
 		},
@@ -54,7 +54,7 @@ func TestConfig_PopulateFromIR(t *testing.T) {
 						Bucket: "",
 					},
 				},
-				Buckets: []ir.BucketConfig{},
+				Buckets: map[string]ir.BucketConfig{},
 			},
 			expectErr: true,
 		},
@@ -66,8 +66,8 @@ func TestConfig_PopulateFromIR(t *testing.T) {
 						Bucket: "my-bucket",
 					},
 				},
-				Buckets: []ir.BucketConfig{
-					{
+				Buckets: map[string]ir.BucketConfig{
+					"my-virtual-bucket": {
 						Name: "my-virtual-bucket",
 						Routes: []ir.RouteConfig{
 							{
@@ -88,8 +88,8 @@ func TestConfig_PopulateFromIR(t *testing.T) {
 						Bucket: "my-bucket",
 					},
 				},
-				Buckets: []ir.BucketConfig{
-					{
+				Buckets: map[string]ir.BucketConfig{
+					"my-virtual-bucket": {
 						Name: "my-virtual-bucket",
 						Routes: []ir.RouteConfig{
 							{

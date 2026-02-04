@@ -77,6 +77,7 @@ backends:
       type: default
 
 buckets:
+  # List format example (preserves order, useful when order matters)
   - name: my-virtual-bucket
     routes:
       - path: ^foo/(?P<rest>.*)
@@ -91,6 +92,26 @@ buckets:
             result: SPECIAL/$1
           - pattern: ^bar/(?P<patternInRewriter>.*)
             result: $patternInRewriter
+
+# Map format example (alternative to list format)
+# buckets:
+#   my-virtual-bucket:
+#     routes:
+#       - path: ^foo/(?P<rest>.*)
+#         backend: backend1
+#         rewrite:
+#           - result: $rest
+#       - path: ^bar/.*
+#         backend: backend2
+#         rewrite:
+#           - pattern: ^bar/special/(.*)
+#             result: SPECIAL/$1
+#           - pattern: ^bar/(?P<patternInRewriter>.*)
+#             result: $patternInRewriter
+#   another-virtual-bucket:
+#     routes:
+#       - path: ^other/(.*)
+#         backend: backend1
 
 credentials_store: credentials.json
 

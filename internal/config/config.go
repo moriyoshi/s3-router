@@ -39,16 +39,16 @@ func buildBackendConfigsFromIR(ctx *Context, src map[string]ir.BackendConfig) ma
 }
 
 // buildBucketConfigsFromIR constructs bucket configurations from intermediate representation.
-func buildBucketConfigsFromIR(ctx *Context, backends map[string]*BackendConfig, src []ir.BucketConfig) map[string]BucketConfig {
+func buildBucketConfigsFromIR(ctx *Context, backends map[string]*BackendConfig, src map[string]ir.BucketConfig) map[string]BucketConfig {
 	if len(src) == 0 {
 		ctx.Append("no buckets defined")
 		return nil
 	}
 
 	buckets := make(map[string]BucketConfig, len(src))
-	for i, irConfig := range src {
+	for name, irConfig := range src {
 		var bucket BucketConfig
-		populateBucketConfigFromIR(ctx.EnterIndex(i), backends, &bucket, &irConfig)
+		populateBucketConfigFromIR(ctx.EnterIndex(name), backends, &bucket, &irConfig)
 		buckets[bucket.Name] = bucket
 	}
 	return buckets

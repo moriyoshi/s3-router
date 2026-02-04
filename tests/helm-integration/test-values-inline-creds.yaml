@@ -53,9 +53,9 @@ config:
         secret_access_key: wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY2
         session_token: FwoGZXIvYXdzEBYaDExxxxxxxxxx
 
-  # Test routing rules
+  # Test routing rules (using new map format)
   buckets:
-    - name: test-bucket
+    test-bucket:
       routes:
         - path: ^bucket1/(.*)
           backend: inline-backend1

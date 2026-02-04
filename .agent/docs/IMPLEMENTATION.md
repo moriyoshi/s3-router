@@ -1010,3 +1010,77 @@ With trace context injected into logs:
 - All server tests: PASS (10 tests)
 - All project tests: PASS
 - Verified trace context appears in all request and error logs
+
+---
+
+## Mapped Buckets Configuration (Phase 2)
+
+### Overview
+Implemented support for mapped (dict-style) buckets configuration alongside the existing list-style format. This provides better readability and aligns with the `backends` configuration pattern.
+
+### Implementation
+
+#### Core Changes
+1. **IR Model (`internal/config/ir/model.go`)**
+   - Added validation logic for duplicate bucket names
+   - Helper types for format detection
+
+2. **Config Loader (`internal/config/ir/loader.go`)**
+   - Implemented `bucketsDecodeHook` function for format detection
+   - Uses mapstructure DecodeHookFunc to handle both formats transparently
+   - Validates duplicates in list format, rejects if found
+
+#### Supported Formats
+
+**List Format (existing - backward compatible):**
+```yaml
+buckets:
+  - name: virtual-bucket-1
+    routes:
+      - path: ^test/(.*)
+        backend: backend1
+  - name: virtual-bucket-2
+    routes:
+      - path: ^data/(.*)
+        backend: backend1
+```
+
+**Map Format (new):**
+```yaml
+buckets:
+  virtual-bucket-1:
+    routes:
+      - path: ^test/(.*)
+        backend: backend1
+  virtual-bucket-2:
+    routes:
+      - path: ^data/(.*)
+        backend: backend1
+```
+
+### Files Modified
+- `internal/config/ir/model.go` - Added duplicate validation
+- `internal/config/ir/loader.go` - Added decode hook for format handling
+- `config.example.yaml` - Added map format example
+- `chart/values.yaml` - Updated with both format examples
+- `chart/values-example.yaml` - Updated with map format alternative
+- `internal/config/ir/loader_test.go` - Added comprehensive tests
+
+### New Tests
+- `TestPopulateFromFileBucketsListFormat` - List format parsing
+- `TestPopulateFromFileBucketsMapFormat` - Map format parsing
+- `TestPopulateFromFileBucketsDuplicateInListFormat` - Duplicate detection
+
+### Key Features
+✅ Backward compatible - existing list format configs work unchanged
+✅ Automatic format detection - transparently handles both formats
+✅ Duplicate validation - rejects duplicate names in list format
+✅ No behavioral changes - both formats convert to identical internal representation
+✅ Consistent with backends - follows same pattern as existing backends config
+
+### Testing Results
+- All existing tests: PASS (no regressions)
+- New bucket format tests: PASS (3 tests)
+- Full project test suite: PASS
+- Build: SUCCESS
+
