@@ -241,8 +241,8 @@ def s3router_with_moto(moto_server: str, s3router_binary: Path) -> Iterator[S3Ro
                     "secret_access_key": "testing",
                 },
             },
-            "moto-s3-mimir-backend": {
-                "bucket": "mimir-backend-bucket",
+            "moto-s3-app-backend": {
+                "bucket": "app-backend-bucket",
                 "endpoint": endpoint_template,
                 "credentials": {
                     "type": "inline",
@@ -353,12 +353,12 @@ def s3router_with_moto(moto_server: str, s3router_binary: Path) -> Iterator[S3Ro
                 ],
             },
             {
-                "name": "mimir-blocks-storage",
+                "name": "app-data-storage",
                 "routes": [
                     {
                         "path": "^(?P<key>.*)",
-                        "backend": "moto-s3-mimir-backend",
-                        "rewrite": [{"result": "mimir/blocks-storage/$key"}],
+                        "backend": "moto-s3-app-backend",
+                        "rewrite": [{"result": "app/data-storage/$key"}],
                     }
                 ],
             },
