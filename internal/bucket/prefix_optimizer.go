@@ -390,7 +390,12 @@ func (p *PrefixOptimizer) analyzeRewrites(analysis *PrefixAnalysis, rewrites []c
 // Otherwise, we return empty string (query with just backend prefix).
 func (p *PrefixOptimizer) ComputePhysicalPrefix(virtualPrefix string, analysis *PrefixAnalysis) (physicalPrefix string, ok bool) {
 	if virtualPrefix == "" {
-		// No virtual prefix - use empty physical prefix (backend prefix will be added)
+		// No virtual prefix
+		// If we have a trivial rewrite with a result prefix, use that as the physical prefix
+		if analysis.HasTrivialRewrite && analysis.RewriteResultPrefix != "" {
+			return analysis.RewriteResultPrefix, true
+		}
+		// Otherwise, use empty physical prefix (backend prefix will be added)
 		return "", true
 	}
 

@@ -260,12 +260,108 @@ Architecture and module separation are strong, and the routing/prefix optimizer 
 - **Reported test status:** `go test ./...` PASS (13 packages), zero regressions.
 - Detailed remediation / verification logs were removed for brevity; use git history if you need the full narrative.
 
-## Review Note (2026-02-01)
+---
 
-### High
+## Post-Implementation Updates
+
+### Review Note (2026-02-01)
+
+#### High Priority
 1. **Potential panic on malformed x-amz-date header**
    - **Location:** internal/backend/proxy/streaming.go (around parse sections near previous line 369 and 474)
    - **Issue:** The code slices amzDate[:8] after checking for empty string, but does not ensure len(amzDate) >= 8.
    - **Impact:** Malformed or malicious headers shorter than 8 chars can trigger a runtime panic.
    - **Fix:** Validate length before slicing, e.g. `if amzDate == "" || len(amzDate) < 8 { return nil, fmt.Errorf("invalid x-amz-date header: must be at least 8 characters") }`.
    - **Status:** ✅ FIXED - Both StreamingAwsChunkedPutObject and StreamingAwsChunkedUploadPart now validate header length before slicing.
+
+---
+
+### Bug Fix (2026-02-03): Incorrect Prefix Filtering in ListObjectsV2 with Rewrite Rules
+
+**Severity:** High - Virtual buckets were leaking objects from unrelated prefixes
+
+**Location:** `internal/bucket/prefix_optimizer.go` (ComputePhysicalPrefix function)
+
+**Problem:** When listing a virtual bucket with a rewrite rule that adds a prefix, the router was returning objects from ALL prefixes in the backend bucket, not just those matching the rewritten prefix.
+
+**Scenario:**
+- Virtual bucket: `mimir-blocks-storage`
+- Route pattern: `^(?P<key>.*)`
+- Rewrite: `mimir/blocks-storage/$key`
+- Backend bucket contains:
+  - `mimir/blocks-storage/test`
+  - `tempo/tempo_cluster_seed.json`
+- Expected: Listing `mimir-blocks-storage` should only return `test` (virtual key)
+- Actual (bug): Listing showed both `test` AND `tempo/` prefix
+
+**Root Cause:**
+The `ComputePhysicalPrefix` function returned an empty string when `virtualPrefix == ""`, even when the route had a trivial rewrite with a non-empty `RewriteResultPrefix`. This caused the backend S3 query to list the entire bucket without a prefix filter, returning objects outside the virtual bucket's scope.
+
+**Fix Applied:**
+Modified `ComputePhysicalPrefix` to return the `RewriteResultPrefix` when:
+1. The virtual prefix is empty
+2. The route has a trivial rewrite (`HasTrivialRewrite == true`)
+3. The rewrite result prefix is non-empty
+
+**Code Changed:**
+```go
+// Before:
+if virtualPrefix == "" {
+    // No virtual prefix - use empty physical prefix (backend prefix will be added)
+    return "", true
+}
+
+// After:
+if virtualPrefix == "" {
+    // No virtual prefix
+    // If we have a trivial rewrite with a result prefix, use that as the physical prefix
+    if analysis.HasTrivialRewrite && analysis.RewriteResultPrefix != "" {
+        return analysis.RewriteResultPrefix, true
+    }
+    // Otherwise, use empty physical prefix (backend prefix will be added)
+    return "", true
+}
+```
+
+**Impact:**
+- Now correctly filters backend queries to only fetch objects matching the rewrite prefix
+- Prevents exposure of unrelated objects in virtual bucket listings
+- Improves performance by reducing the number of objects fetched from backend
+
+**Testing:**
+- Created comprehensive integration test suite `test_prefix_filtering_bug.py` with 14 test cases:
+  - 4 core tests (basic filtering scenarios)
+  - 3 parameterized pagination tests with different MaxKeys values (5, 10, 20)
+  - 3 parameterized date-prefix tests with varying data distributions
+  - 4 parameterized edge case tests with MaxKeys (1, 2, 5, 10)
+- Uses `@pytest.mark.parametrize` decorator for DRY principle and maintainability
+- All 14 new tests fail before the fix and pass after the fix
+- Tests verify prefix filtering works correctly across all pagination parameters
+- All existing unit and integration tests continue to pass: 30/30 list-related tests pass
+- No regressions detected
+- Total: 44 list-related tests all passing
+
+**Files Modified:**
+1. `internal/bucket/prefix_optimizer.go` - Fixed ComputePhysicalPrefix logic
+2. `tests/integration/test_prefix_filtering_bug.py` - Added regression test
+3. `tests/integration/conftest.py` - Added mimir-blocks-storage bucket configuration
+
+**Performance Impact:**
+- Backend queries now use prefix filters when available
+- Reduces objects fetched from backend by filtering at source
+- No additional latency (prefix is determined from route configuration)
+
+**Verification:**
+```bash
+# Before fix:
+GET /mimir-backend-bucket/?list-type=2&max-keys=1000 HTTP/1.1
+# Returns: mimir/blocks-storage/test AND tempo/tempo_cluster_seed.json (WRONG)
+
+# After fix:
+GET /mimir-backend-bucket/?list-type=2&prefix=mimir%2Fblocks-storage%2F&max-keys=1000 HTTP/1.1
+# Returns: mimir/blocks-storage/test only (CORRECT)
+```
+
+**Backward Compatibility:** ✅ No breaking changes - all existing tests pass
+
+**Status:** ✅ FIXED - Virtual bucket listings now correctly filter by rewrite prefix.

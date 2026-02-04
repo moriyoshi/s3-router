@@ -241,6 +241,15 @@ def s3router_with_moto(moto_server: str, s3router_binary: Path) -> Iterator[S3Ro
                     "secret_access_key": "testing",
                 },
             },
+            "moto-s3-mimir-backend": {
+                "bucket": "mimir-backend-bucket",
+                "endpoint": endpoint_template,
+                "credentials": {
+                    "type": "inline",
+                    "access_key_id": "testing",
+                    "secret_access_key": "testing",
+                },
+            },
         },
         "buckets": [
             {
@@ -340,6 +349,16 @@ def s3router_with_moto(moto_server: str, s3router_binary: Path) -> Iterator[S3Ro
                         "path": "^files/(?P<rest>.*)",
                         "backend": "moto-s3-prefix",
                         "rewrite": [{"result": "$rest"}],
+                    }
+                ],
+            },
+            {
+                "name": "mimir-blocks-storage",
+                "routes": [
+                    {
+                        "path": "^(?P<key>.*)",
+                        "backend": "moto-s3-mimir-backend",
+                        "rewrite": [{"result": "mimir/blocks-storage/$key"}],
                     }
                 ],
             },
