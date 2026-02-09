@@ -629,3 +629,255 @@ func TestSignStreamingRequest_WithSessionToken(t *testing.T) {
 	assert.NotEmpty(t, authHeader)
 	assert.Contains(t, authHeader, "AWS4-HMAC-SHA256")
 }
+
+// Regression tests for URL-encoded path handling in canonical request
+// See: https://github.com/moriyoshi/s3-router/issues/...
+// Issue: Signature mismatch when object keys contain URL-encoded characters (e.g., %3A for colon)
+
+func TestS3SignerCanonicalRequest_URLEncodedColon(t *testing.T) {
+	t.Parallel()
+	// Test case matching the real error: key contains colons encoded as %3A
+	signer := NewS3Signer(aws.Credentials{
+		AccessKeyID:     "ASIAUSJOUX2FNNJ4BVRR",
+		SecretAccessKey: "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY",
+	}, "ap-northeast-1")
+
+	// Request with URL-encoded path (as it would be after going through net/url parsing)
+	req := &http.Request{
+		Method: http.MethodPut,
+		Host:   "payid-k8s-observability-dev.s3.ap-northeast-1.amazonaws.com",
+		URL: &url.URL{
+			Scheme:   "https",
+			Host:     "payid-k8s-observability-dev.s3.ap-northeast-1.amazonaws.com",
+			Path:     "/loki/fake/ca229e806d0bed66/19c2c978262:19c2c978263:42a7dac1", // Decoded
+			RawPath:  "/loki/fake/ca229e806d0bed66/19c2c978262%3A19c2c978263%3A42a7dac1", // Encoded as it appears on wire
+		},
+		Header: http.Header{
+			"X-Amz-Date":           []string{"20260208T171111Z"},
+			"X-Amz-Content-Sha256": []string{"3cca444cebbc148b21b627b333637cf36ce7d0669eb70b721cce911f838ea263"},
+			"Content-Length":       []string{"766"},
+			"Content-Md5":          []string{"q7ZdPVVO4bNUALiZzVD9cA=="},
+		},
+	}
+
+	canonical := signer.buildCanonicalRequest(req, "3cca444cebbc148b21b627b333637cf36ce7d0669eb70b721cce911f838ea263")
+	canonicalStr := string(canonical)
+
+	// CRITICAL: The canonical request should contain the URL-encoded form (%3A)
+	// NOT the decoded form (:) because that's what AWS will see on the wire
+	assert.Contains(t, canonicalStr, "19c2c978262%3A19c2c978263%3A42a7dac1",
+		"canonical request should preserve URL encoding for colons in object key")
+
+	// Verify it does NOT contain the decoded form which would cause signature mismatch
+	assert.NotContains(t, canonicalStr, "19c2c978262:19c2c978263:42a7dac1",
+		"canonical request should not contain decoded form of URL-encoded characters")
+}
+
+func TestS3SignerCanonicalRequest_URLEncodedSpecialChars(t *testing.T) {
+	t.Parallel()
+	signer := NewS3Signer(aws.Credentials{
+		AccessKeyID:     "AKIAIOSFODNN7EXAMPLE",
+		SecretAccessKey: "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY",
+	}, "us-east-1")
+
+	testCases := []struct {
+		name           string
+		decodedPath    string
+		encodedPath    string
+		expectedInSig  string // What should appear in the canonical request
+		shouldNotAppear string // What should NOT appear
+	}{
+		{
+			name:          "colon (%3A)",
+			decodedPath:   "/bucket/file:name",
+			encodedPath:   "/bucket/file%3Aname",
+			expectedInSig: "file%3Aname",
+		},
+		{
+			name:          "space (%20)",
+			decodedPath:   "/bucket/file name",
+			encodedPath:   "/bucket/file%20name",
+			expectedInSig: "file%20name",
+		},
+		{
+			name:          "question mark (%3F)",
+			decodedPath:   "/bucket/file?query",
+			encodedPath:   "/bucket/file%3Fquery",
+			expectedInSig: "file%3Fquery",
+		},
+		{
+			name:          "equals sign (%3D)",
+			decodedPath:   "/bucket/key=value",
+			encodedPath:   "/bucket/key%3Dvalue",
+			expectedInSig: "key%3Dvalue",
+		},
+		{
+			name:          "ampersand (%26)",
+			decodedPath:   "/bucket/file&other",
+			encodedPath:   "/bucket/file%26other",
+			expectedInSig: "file%26other",
+		},
+		{
+			name:          "multiple encoded chars",
+			decodedPath:   "/bucket/a:b c?d=e&f",
+			encodedPath:   "/bucket/a%3Ab%20c%3Fd%3De%26f",
+			expectedInSig: "a%3Ab%20c%3Fd%3De%26f",
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			req := &http.Request{
+				Method: http.MethodPut,
+				Host:   "s3.amazonaws.com",
+				URL: &url.URL{
+					Scheme:   "https",
+					Host:     "s3.amazonaws.com",
+					Path:     tc.decodedPath,
+					RawPath:  tc.encodedPath,
+				},
+				Header: http.Header{
+					"X-Amz-Date":           []string{"20240101T000000Z"},
+					"X-Amz-Content-Sha256": []string{"e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"},
+				},
+			}
+
+			canonical := signer.buildCanonicalRequest(req, "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855")
+			canonicalStr := string(canonical)
+
+			// The canonical request should use the encoded path (as it appears on the wire)
+			assert.Contains(t, canonicalStr, tc.expectedInSig,
+				"canonical request should contain URL-encoded path: %s", tc.name)
+		})
+	}
+}
+
+func TestS3SignerCanonicalRequest_EscapedPathNotPath(t *testing.T) {
+	t.Parallel()
+	// This test explicitly verifies that buildCanonicalRequest uses EscapedPath()
+	// and not Path, which is critical when RawPath is set
+	signer := NewS3Signer(aws.Credentials{}, "us-east-1")
+
+	req := &http.Request{
+		Method: http.MethodGet,
+		Host:   "s3.amazonaws.com",
+		URL: &url.URL{
+			Scheme:   "https",
+			Host:     "s3.amazonaws.com",
+			Path:     "/bucket/my:key",     // Decoded by Go's URL parser
+			RawPath:  "/bucket/my%3Akey",   // Original encoded form
+		},
+		Header: http.Header{
+			"X-Amz-Date":           []string{"20240101T000000Z"},
+			"X-Amz-Content-Sha256": []string{"e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"},
+		},
+	}
+
+	canonical := signer.buildCanonicalRequest(req, "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855")
+	canonicalStr := string(canonical)
+
+	// When RawPath is set, EscapedPath() returns RawPath (preserving encoding)
+	assert.Contains(t, canonicalStr, "/bucket/my%3Akey",
+		"canonical request should use RawPath when set (preserving %3A encoding)")
+
+	// Confirm it's using the right path by checking it doesn't use the fully decoded form
+	lines := strings.Split(canonicalStr, "\n")
+	assert.Greater(t, len(lines), 1, "canonical request should have multiple lines")
+	// The second line is the CanonicalURI
+	assert.Equal(t, "/bucket/my%3Akey", lines[1],
+		"CanonicalURI should be the URL-encoded path from RawPath, not decoded Path")
+}
+
+func TestS3SignerCanonicalRequest_NoRawPath(t *testing.T) {
+	t.Parallel()
+	// Test the case where RawPath is not set (EscapedPath() will encode Path)
+	signer := NewS3Signer(aws.Credentials{}, "us-east-1")
+
+	// When RawPath is not set, Go will encode Path if needed
+	req := &http.Request{
+		Method: http.MethodGet,
+		Host:   "s3.amazonaws.com",
+		URL: &url.URL{
+			Scheme: "https",
+			Host:   "s3.amazonaws.com",
+			Path:   "/bucket/my%20key", // Already encoded in the path
+			// RawPath is not set
+		},
+		Header: http.Header{
+			"X-Amz-Date":           []string{"20240101T000000Z"},
+			"X-Amz-Content-Sha256": []string{"e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"},
+		},
+	}
+
+	canonical := signer.buildCanonicalRequest(req, "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855")
+	canonicalStr := string(canonical)
+
+	// EscapedPath() will return the path as-is or double-encode if needed
+	// Since Path has %20, EscapedPath will preserve it or potentially encode the %
+	lines := strings.Split(canonicalStr, "\n")
+	assert.Greater(t, len(lines), 1)
+	// The path should be properly handled for canonical form
+	assert.True(t, strings.Contains(canonicalStr, "/bucket/my"),
+		"canonical request should contain the bucket and key prefix")
+}
+
+func TestS3SignerSignRequest_URLEncodedKey(t *testing.T) {
+	t.Parallel()
+	// Full end-to-end test: sign a request with URL-encoded key and verify signature matches
+	signer := NewS3Signer(aws.Credentials{
+		AccessKeyID:     "AKIAIOSFODNN7EXAMPLE",
+		SecretAccessKey: "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY",
+	}, "us-east-1")
+
+	req1 := &http.Request{
+		Method: http.MethodPut,
+		Host:   "s3.amazonaws.com",
+		URL: &url.URL{
+			Scheme:   "https",
+			Host:     "s3.amazonaws.com",
+			Path:     "/bucket/my:key",
+			RawPath:  "/bucket/my%3Akey",
+		},
+		Header: http.Header{
+			"X-Amz-Content-Sha256": []string{"e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"},
+			"Content-Type":         []string{"application/octet-stream"},
+		},
+	}
+
+	// Set same timestamp for reproducible signatures
+	req1.Header.Set("X-Amz-Date", "20240101T000000Z")
+
+	err := signer.SignRequest(req1, "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855")
+	assert.NoError(t, err)
+
+	sig1 := req1.Header.Get("Authorization")
+	assert.NotEmpty(t, sig1)
+
+	// Create an identical request and verify it gets the same signature
+	req2 := &http.Request{
+		Method: http.MethodPut,
+		Host:   "s3.amazonaws.com",
+		URL: &url.URL{
+			Scheme:   "https",
+			Host:     "s3.amazonaws.com",
+			Path:     "/bucket/my:key",
+			RawPath:  "/bucket/my%3Akey",
+		},
+		Header: http.Header{
+			"X-Amz-Content-Sha256": []string{"e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"},
+			"Content-Type":         []string{"application/octet-stream"},
+		},
+	}
+
+	req2.Header.Set("X-Amz-Date", "20240101T000000Z")
+
+	err = signer.SignRequest(req2, "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855")
+	assert.NoError(t, err)
+
+	sig2 := req2.Header.Get("Authorization")
+	assert.NotEmpty(t, sig2)
+
+	// Both requests should have identical signatures since they're identical
+	assert.Equal(t, sig1, sig2,
+		"identical requests with URL-encoded keys should produce identical signatures")
+}

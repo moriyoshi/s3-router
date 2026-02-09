@@ -148,6 +148,107 @@ class TestBasicS3Operations:
         assert resp["ContentLength"] == 9
         assert resp["ContentType"] == "text/plain"
 
+    def test_object_with_url_encoded_characters_in_key(self, e2e_moto_client: S3Client) -> None:
+        """Test PUT/GET/DELETE objects with URL-encoded characters in key.
+
+        This is a regression test for the SignatureDoesNotMatch bug that occurred
+        when object keys contained URL-encoded characters like colons (%3A).
+
+        See: https://github.com/moriyoshi/s3-router/issues/...
+        """
+        # Test various URL-encoded characters that might appear in object keys
+        test_keys = [
+            "file:with:colons.txt",  # Colons encoded as %3A
+            "file with spaces.txt",  # Spaces encoded as %20
+            "file?with?question.txt",  # Question marks encoded as %3F
+            "file=with=equals.txt",  # Equals signs encoded as %3D
+            "file&with&ampersand.txt",  # Ampersands encoded as %26
+            "path/file:with:colons:in:name.txt",  # Colons in nested path
+            "complex:key?with=multiple&encoded=chars.txt",  # Multiple encoded characters
+        ]
+
+        for key in test_keys:
+            test_data = f"test data for {key}".encode()
+
+            # PUT object with URL-encoded key
+            e2e_moto_client.put_object(Bucket="test-bucket", Key=key, Body=test_data)
+
+            # GET object and verify content
+            resp = e2e_moto_client.get_object(Bucket="test-bucket", Key=key)
+            retrieved_data = resp["Body"].read()
+            assert retrieved_data == test_data, f"Data mismatch for key: {key}"
+
+            # HEAD object and verify metadata
+            resp = e2e_moto_client.head_object(Bucket="test-bucket", Key=key)
+            assert resp["ContentLength"] == len(test_data), f"Content length mismatch for key: {key}"
+
+            # DELETE object
+            e2e_moto_client.delete_object(Bucket="test-bucket", Key=key)
+
+            # Verify it's deleted
+            try:
+                e2e_moto_client.get_object(Bucket="test-bucket", Key=key)
+                assert False, f"Object should have been deleted: {key}"
+            except Exception:
+                # Expected - object should not exist
+                pass
+
+    def test_multipart_upload_with_url_encoded_key(self, e2e_moto_client: S3Client) -> None:
+        """Test multipart upload with URL-encoded characters in the key.
+
+        Verifies that the signature fix works for multipart upload operations
+        which use different signing paths.
+        """
+        key = "multipart:upload:with:colons.bin"
+
+        # Initiate multipart upload
+        response = e2e_moto_client.create_multipart_upload(Bucket="test-bucket", Key=key)
+        upload_id = response["UploadId"]
+
+        try:
+            # Upload a part
+            part_data = b"x" * (5 * 1024 * 1024)  # 5MB part
+            part_response = e2e_moto_client.upload_part(
+                Bucket="test-bucket",
+                Key=key,
+                PartNumber=1,
+                UploadId=upload_id,
+                Body=part_data,
+            )
+
+            # Complete multipart upload
+            e2e_moto_client.complete_multipart_upload(
+                Bucket="test-bucket",
+                Key=key,
+                UploadId=upload_id,
+                MultipartUpload={
+                    "Parts": [
+                        {
+                            "PartNumber": 1,
+                            "ETag": part_response["ETag"],
+                        }
+                    ]
+                },
+            )
+
+            # Verify the object was created
+            resp = e2e_moto_client.get_object(Bucket="test-bucket", Key=key)
+            retrieved_data = resp["Body"].read()
+            assert retrieved_data == part_data
+
+            # Cleanup
+            e2e_moto_client.delete_object(Bucket="test-bucket", Key=key)
+
+        except Exception as e:
+            # Abort the upload if something fails
+            try:
+                e2e_moto_client.abort_multipart_upload(
+                    Bucket="test-bucket", Key=key, UploadId=upload_id
+                )
+            except Exception:
+                pass
+            raise e
+
 
 class TestMultipleBackends:
     """Test routing with multiple backends."""

@@ -95,7 +95,7 @@ func (s *S3Signer) buildCanonicalRequest(req *http.Request, payloadHash string) 
 	buf.WriteString("\n")
 
 	// CanonicalURI
-	uri := req.URL.Path
+	uri := req.URL.EscapedPath()
 	if uri == "" {
 		uri = "/"
 	}
