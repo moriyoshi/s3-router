@@ -647,10 +647,10 @@ func TestS3SignerCanonicalRequest_URLEncodedColon(t *testing.T) {
 		Method: http.MethodPut,
 		Host:   "payid-k8s-observability-dev.s3.ap-northeast-1.amazonaws.com",
 		URL: &url.URL{
-			Scheme:   "https",
-			Host:     "payid-k8s-observability-dev.s3.ap-northeast-1.amazonaws.com",
-			Path:     "/loki/fake/ca229e806d0bed66/19c2c978262:19c2c978263:42a7dac1", // Decoded
-			RawPath:  "/loki/fake/ca229e806d0bed66/19c2c978262%3A19c2c978263%3A42a7dac1", // Encoded as it appears on wire
+			Scheme:  "https",
+			Host:    "payid-k8s-observability-dev.s3.ap-northeast-1.amazonaws.com",
+			Path:    "/loki/fake/ca229e806d0bed66/19c2c978262:19c2c978263:42a7dac1",     // Decoded
+			RawPath: "/loki/fake/ca229e806d0bed66/19c2c978262%3A19c2c978263%3A42a7dac1", // Encoded as it appears on wire
 		},
 		Header: http.Header{
 			"X-Amz-Date":           []string{"20260208T171111Z"},
@@ -681,10 +681,10 @@ func TestS3SignerCanonicalRequest_URLEncodedSpecialChars(t *testing.T) {
 	}, "us-east-1")
 
 	testCases := []struct {
-		name           string
-		decodedPath    string
-		encodedPath    string
-		expectedInSig  string // What should appear in the canonical request
+		name            string
+		decodedPath     string
+		encodedPath     string
+		expectedInSig   string // What should appear in the canonical request
 		shouldNotAppear string // What should NOT appear
 	}{
 		{
@@ -731,10 +731,10 @@ func TestS3SignerCanonicalRequest_URLEncodedSpecialChars(t *testing.T) {
 				Method: http.MethodPut,
 				Host:   "s3.amazonaws.com",
 				URL: &url.URL{
-					Scheme:   "https",
-					Host:     "s3.amazonaws.com",
-					Path:     tc.decodedPath,
-					RawPath:  tc.encodedPath,
+					Scheme:  "https",
+					Host:    "s3.amazonaws.com",
+					Path:    tc.decodedPath,
+					RawPath: tc.encodedPath,
 				},
 				Header: http.Header{
 					"X-Amz-Date":           []string{"20240101T000000Z"},
@@ -762,10 +762,10 @@ func TestS3SignerCanonicalRequest_EscapedPathNotPath(t *testing.T) {
 		Method: http.MethodGet,
 		Host:   "s3.amazonaws.com",
 		URL: &url.URL{
-			Scheme:   "https",
-			Host:     "s3.amazonaws.com",
-			Path:     "/bucket/my:key",     // Decoded by Go's URL parser
-			RawPath:  "/bucket/my%3Akey",   // Original encoded form
+			Scheme:  "https",
+			Host:    "s3.amazonaws.com",
+			Path:    "/bucket/my:key",   // Decoded by Go's URL parser
+			RawPath: "/bucket/my%3Akey", // Original encoded form
 		},
 		Header: http.Header{
 			"X-Amz-Date":           []string{"20240101T000000Z"},
@@ -833,10 +833,10 @@ func TestS3SignerSignRequest_URLEncodedKey(t *testing.T) {
 		Method: http.MethodPut,
 		Host:   "s3.amazonaws.com",
 		URL: &url.URL{
-			Scheme:   "https",
-			Host:     "s3.amazonaws.com",
-			Path:     "/bucket/my:key",
-			RawPath:  "/bucket/my%3Akey",
+			Scheme:  "https",
+			Host:    "s3.amazonaws.com",
+			Path:    "/bucket/my:key",
+			RawPath: "/bucket/my%3Akey",
 		},
 		Header: http.Header{
 			"X-Amz-Content-Sha256": []string{"e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"},
@@ -858,10 +858,10 @@ func TestS3SignerSignRequest_URLEncodedKey(t *testing.T) {
 		Method: http.MethodPut,
 		Host:   "s3.amazonaws.com",
 		URL: &url.URL{
-			Scheme:   "https",
-			Host:     "s3.amazonaws.com",
-			Path:     "/bucket/my:key",
-			RawPath:  "/bucket/my%3Akey",
+			Scheme:  "https",
+			Host:    "s3.amazonaws.com",
+			Path:    "/bucket/my:key",
+			RawPath: "/bucket/my%3Akey",
 		},
 		Header: http.Header{
 			"X-Amz-Content-Sha256": []string{"e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"},

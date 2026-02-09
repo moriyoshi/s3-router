@@ -242,9 +242,7 @@ class TestBasicS3Operations:
         except Exception as e:
             # Abort the upload if something fails
             try:
-                e2e_moto_client.abort_multipart_upload(
-                    Bucket="test-bucket", Key=key, UploadId=upload_id
-                )
+                e2e_moto_client.abort_multipart_upload(Bucket="test-bucket", Key=key, UploadId=upload_id)
             except Exception:
                 pass
             raise e
